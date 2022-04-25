@@ -4,11 +4,8 @@ from utils import *
 from model import *
 import numpy as np
 from tqdm import tqdm
-import os
-import pickle
 
 
-os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 opt = {}
 if torch.cuda.is_available():
     torch.backends.cudnn.deterministic = True
@@ -19,38 +16,39 @@ else:
     opt["device"] = torch.device("cpu")
     opt["if_cuda"] = False
 
-opt['data_set'] = 'CIFAR'
-opt['x_dis'] = 'Logistic'  ## or MixLogistic
-opt['z_channels'] = 16  ## 2*64
-opt['epochs'] = 200
-opt['dataset_path'] = '../data/'
-opt['save_path'] = './save/'
-opt['result_path'] = './result/'
+opt['data_set']='CIFAR'
+opt['x_dis']='Logistic' ## or MixLogistic 
+opt['z_channels']=2 ## 2*64
+opt['epochs'] = 1000
+opt['dataset_path']='../data/'
+opt['save_path']='./save/'
+opt['result_path']='./result/'
 opt['batch_size'] = 100
-opt['test_batch_size'] = 200
-opt['if_regularizer'] = False
-opt['load_model'] = False
-opt['lr'] = 1e-4
-opt['data_aug'] = False
-opt["seed"] = 0
-opt['if_save'] = True
-opt['save_epoch'] = 50
-opt['additional_epochs'] = 100
-opt['sample_size'] = 100
-opt['if_save'] = True
+opt['test_batch_size']=200
+opt['if_regularizer']=False
+opt['load_model']=False
+opt['lr']=1e-4
+opt['data_aug']=False
+opt["seed"]=0
+opt['if_save']=True
+opt['save_epoch']=50
+opt['additional_epochs']=100
+opt['sample_size']=100
+opt['if_save']=True
+
 
 np.random.seed(opt['seed'])
 torch.manual_seed(opt['seed'])
 
-train_data, test_data, train_data_evaluation = LoadData(opt)
-model = VAE(opt).to(opt['device'])
+train_data,test_data,train_data_evaluation=LoadData(opt)
+model=VAE(opt).to(opt['device'])
 
-if opt['load_model'] == True:
-    model.load_state_dict(torch.load(f"{opt['save_path']}model_{opt['data_set']}_{str(opt['z_channels'])}.pth"))
+if opt['load_model']==True:
+    model.load_state_dict(torch.load(opt['save_path']+opt['load_name']))
 
 optimizer = optim.Adam(model.parameters(), lr=opt['lr'])
 
-test_BPD_list = []
+test_BPD_list=[]
 for epoch in range(1, opt['epochs'] + 1):
     model.train()
     for x, _ in tqdm(train_data):
@@ -61,32 +59,14 @@ for epoch in range(1, opt['epochs'] + 1):
 
     with torch.no_grad():
         model.eval()
-        test_BPD = 0.
+        test_BPD=0.
         for x, _ in test_data:
-            test_BPD += -model(x.to(opt['device'])).item()
-        test_BPD = test_BPD / (len(test_data) * np.prod(x.size()[-3:]))
+            test_BPD+=-model(x.to(opt['device'])).item()
+        test_BPD=test_BPD/(len(test_data)*np.prod(x.size()[-3:]))
 
-    print('epoch:', epoch, test_BPD)
+    print('epoch:',epoch,test_BPD)
     test_BPD_list.append(test_BPD)
-    np.save(opt['save_path'] + 'test_BPD', test_BPD_list)
-
-    if opt['if_save_model']:
-        torch.save(model.state_dict(), f"{opt['save_path']}model_CIFAR_{str(opt['z_channels'])}.pth")
-
-    if opt['if_save_latent']:
-        z_mu_list = []
-        z_std_list = []
-        with torch.no_grad():
-            for x, _ in train_data:
-                z_mu, z_std = model.encoder(x.to(opt['device']))
-                z_std_list.append(z_std.cpu().numpy())
-                z_mu_list.append(z_mu.cpu().numpy())
-
-        z_dict = {}
-        z_mu_array = np.concatenate(z_mu_list, axis=0).reshape([-1, opt['z_channels'] * 8 * 8])
-        z_std_array = np.concatenate(z_std_list, axis=0).reshape([-1, opt['z_channels'] * 8 * 8])
-        z_dict["mean"] = z_mu_array
-        z_dict["std"] = z_std_array
-
-        with open("/home/xzhoubi/hudson/VAE_baselines/save/latent_CIFAR_16.pickle", 'wb') as handle:
-            pickle.dump(z_dict, handle)
+    np.save(opt['save_path']+'test_BPD',test_BPD_list)
+    
+    if opt['if_save']:
+        torch.save(model.state_dict(),opt['save_path']+'.pth')
