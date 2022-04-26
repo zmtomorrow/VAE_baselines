@@ -56,11 +56,11 @@ class PixelCNN(nn.Module):
         """
         # Create empty image
         if img is None:
-            img = 0.1 * torch.ones(img_shape, dtype=torch.float).to(device)
+            img = 0. * torch.ones(img_shape, dtype=torch.float).to(device)
         # Generation loop
         for h in range(img_shape[2]):
             for w in range(img_shape[3]):
-                pred_mean, pred_std = self.forward(img[:, :, :h + 1, :])
+                pred_mean, pred_std = self.forward(img)
                 pred = torch.cat((pred_mean, pred_std), dim=1)
                 img[:, :, h, w] = pred[:, :, h, w]
         gen_z_mean = img[:, :int(self.c_in / 2), :, :]

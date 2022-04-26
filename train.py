@@ -33,11 +33,11 @@ opt['load_model'] = False
 opt['lr'] = 1e-4
 opt['data_aug'] = False
 opt["seed"] = 0
-opt['if_save'] = True
+opt['if_save_model'] = True
 opt['save_epoch'] = 50
 opt['additional_epochs'] = 100
 opt['sample_size'] = 100
-opt['if_save'] = True
+opt['if_save_latent'] = True
 
 np.random.seed(opt['seed'])
 torch.manual_seed(opt['seed'])

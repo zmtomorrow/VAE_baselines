@@ -91,8 +91,9 @@ class LatentBlockDataset(Dataset):
 
     def __getitem__(self, index):
         mean = self.data['mean'][index]
-        std = self.data['mean'][index]
+        std = self.data['std'][index]
         return mean, std
 
     def __len__(self):
         return len(self.data['mean'])
+
