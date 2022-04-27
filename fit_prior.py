@@ -75,8 +75,11 @@ for epoch in range(1, opt['epochs'] + 1):
         z_hat_mean = z_hat_mean.view([-1, np.prod(latent_data_shape[1:])])
         z_hat_std = z_hat_std.view([-1, np.prod(latent_data_shape[1:])])
 
-        kl = (torch.log(z_hat_std + eps) - torch.log(z_std + eps) +
-              (z_std ** 2 + (z_mean - z_hat_mean) ** 2) / (2 * z_hat_std ** 2) - 0.5).sum(1).mean(0)
+        # kl = (torch.log(z_hat_std + eps) - torch.log(z_std + eps) +
+        #       (z_std ** 2 + (z_mean - z_hat_mean) ** 2) / (2 * z_hat_std ** 2) - 0.5).sum(1).mean(0)
+        kl = (torch.log(z_hat_std + eps) +
+              (z_std ** 2 + (z_mean - z_hat_mean) ** 2) / (2 * z_hat_std ** 2)).sum(1).mean(0)
+
         kl.backward()
         optimizer.step()
         # print("KL", kl.item())
