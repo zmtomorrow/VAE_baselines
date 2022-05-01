@@ -8,7 +8,9 @@ import os
 import pickle
 
 
-os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+os.environ["CUDA_VISIBLE_DEVICES"] = "4"
+os.chdir("/import/home/xzhoubi/hudson/VAE_baselines/")
+print(os.getcwd())
 opt = {}
 if torch.cuda.is_available():
     torch.backends.cudnn.deterministic = True
@@ -21,7 +23,7 @@ else:
 
 opt['data_set'] = 'CIFAR'
 opt['x_dis'] = 'Logistic'  ## or MixLogistic
-opt['z_channels'] = 16  ## 2*64
+opt['z_channels'] = 2  ## 2*64
 opt['epochs'] = 200
 opt['dataset_path'] = '../data/'
 opt['save_path'] = './save/'
@@ -88,5 +90,5 @@ for epoch in range(1, opt['epochs'] + 1):
         z_dict["mean"] = z_mu_array
         z_dict["std"] = z_std_array
 
-        with open("/home/xzhoubi/hudson/VAE_baselines/save/latent_CIFAR_16.pickle", 'wb') as handle:
+        with open(f"/home/xzhoubi/hudson/VAE_baselines/save/latent_CIFAR_{str(opt['z_channels'])}.pickle", 'wb') as handle:
             pickle.dump(z_dict, handle)

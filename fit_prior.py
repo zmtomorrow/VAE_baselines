@@ -8,12 +8,20 @@ import numpy as np
 from tqdm import tqdm
 import os
 import sys
+import argparse
+import utils
 
 sys.path.append(os.getcwd())
 sys.path.append(os.getcwd() + '/PixelCNN')
 
-os.environ["CUDA_VISIBLE_DEVICES"] = "5"
-opt = {}
+os.environ["CUDA_VISIBLE_DEVICES"] = "7"
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--architecture', type=str, default='pixelcnn')
+parser.add_argument('--z_channels', type=int, default=2)
+args = parser.parse_args()
+opt = utils.process_args(args)
+
 if torch.cuda.is_available():
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = True
@@ -25,7 +33,7 @@ else:
 
 opt['data_set'] = 'latent'
 opt['x_dis'] = 'Logistic'  ## or MixLogistic
-opt['z_channels'] = 16  ## 2*64
+# opt['z_channels'] = 2  ## 2*64
 opt['epochs'] = 100
 opt['dataset_path'] = f"./save/latent_CIFAR_{opt['z_channels']}.pickle"
 opt['save_path'] = './save/'
@@ -42,7 +50,7 @@ opt['save_epoch'] = 50
 opt['additional_epochs'] = 100
 opt['sample_size'] = 100
 opt['if_save_latent'] = True
-opt["c_hidden"] = 128
+opt['c_hidden'] = 128
 opt['layer_num'] = 15
 opt['visualize'] = True
 np.random.seed(opt['seed'])
@@ -50,9 +58,22 @@ torch.manual_seed(opt['seed'])
 eps = 1e-7
 
 train_data, test_data, train_data_evaluation = LoadData(opt)
-latent_data_shape = [-1, 1, 32, 32]
 
-model = PixelCNN(c_in=latent_data_shape[1] * 2, c_hidden=opt['c_hidden'], layer_num=opt['layer_num']).to(opt["device"])
+if args.architecture == "pixelcnn":
+    latent_data_shape = [-1, opt['z_channels'], 8, 8]
+    gen_img_shape = [20] + [latent_data_shape[1] * 2] + latent_data_shape[2:]
+    cat_dim = 1
+    model = PixelCNN(device=opt['device'], c_in=latent_data_shape[1] * 2, c_hidden=opt['c_hidden'],
+                     layer_num=opt['layer_num']).to(opt["device"])
+elif args.architecture == 'rnn':
+    latent_data_shape = [-1, opt['z_channels'] * 8 * 8, 1]
+    gen_img_shape = [20] + [latent_data_shape[1]] + [latent_data_shape[2] * 2]
+    cat_dim = 2
+    model = RNN(device=opt['device'], input_size=latent_data_shape[2] * 2, hidden_size=opt['c_hidden'],
+                num_layers=2, output_size=latent_data_shape[2] * 2).to(opt["device"])
+else:
+    raise NotImplementedError(args.architecture)
+
 optimizer = optim.Adam(model.parameters(), lr=opt['lr'])
 
 pretrained_VAE = VAE(opt).to(opt['device'])
@@ -67,7 +88,7 @@ for epoch in range(1, opt['epochs'] + 1):
         optimizer.zero_grad()
         z_mean = z_mean.reshape(latent_data_shape).to(opt["device"])
         z_std = z_std.reshape(latent_data_shape).to(opt["device"])
-        z = torch.cat((z_mean, z_std), dim=1)
+        z = torch.cat((z_mean, z_std), dim=cat_dim)
         z_hat_mean, z_hat_std = model.forward(z)
         
         z_mean = z_mean.view([-1, np.prod(latent_data_shape[1:])])
@@ -78,7 +99,7 @@ for epoch in range(1, opt['epochs'] + 1):
         # kl = (torch.log(z_hat_std + eps) - torch.log(z_std + eps) +
         #       (z_std ** 2 + (z_mean - z_hat_mean) ** 2) / (2 * z_hat_std ** 2) - 0.5).sum(1).mean(0)
         kl = (torch.log(z_hat_std + eps) +
-              (z_std ** 2 + (z_mean - z_hat_mean) ** 2) / (2 * z_hat_std ** 2)).sum(1).mean(0)
+              (z_std ** 2 + (z_mean - z_hat_mean) ** 2) / (2 * z_hat_std ** 2)).mean(1).mean(0)
 
         kl.backward()
         optimizer.step()
@@ -86,8 +107,7 @@ for epoch in range(1, opt['epochs'] + 1):
         KL_list.append(kl.item())
 
     model.eval()
-    gen_img_shape = [20] + [latent_data_shape[1] * 2] + latent_data_shape[2:]
-    gen_z = model.sample(img_shape=gen_img_shape, device=opt["device"])
+    gen_z = model.sample(img_shape=gen_img_shape)
 
     if opt['visualize'] and (epoch + 1) % 2 == 0:
         pxz_params = pretrained_VAE.decoder(gen_z)
@@ -106,5 +126,5 @@ for epoch in range(1, opt['epochs'] + 1):
         KL_list = []
 
     if opt['if_save_model']:
-        torch.save(model.state_dict(), f"{opt['save_path']}PixelCNN_{str(opt['z_channels'])}.pth")
+        torch.save(model.state_dict(), f"{opt['save_path']}_{opt['architecture']}_{str(opt['z_channels'])}.pth")
 

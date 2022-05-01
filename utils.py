@@ -7,6 +7,9 @@ from torchvision import transforms
 import matplotlib.pyplot as plt
 from torch.utils.data import Dataset
 import pickle
+import argparse
+import os
+from typing import Tuple, List, Dict
 
 rescaling = lambda x: (x - .5) * 2.
 rescaling_inv = lambda x: .5 * x + .5
@@ -97,3 +100,21 @@ class LatentBlockDataset(Dataset):
     def __len__(self):
         return len(self.data['mean'])
 
+
+def process_args(args: argparse.Namespace) -> Dict:
+    kwargs = vars(args)
+    # save_path = args.save_path.rstrip()
+    # save_path = (
+    #     f"{save_path}/{args.dataset}/dataset_{args.dataset}__method_{args.method}__train_size_{args.train_size}"
+    #     f"__DA_{args.aug}__reg_{args.reg}__seed_{args.seed}__"
+    # )
+    # i = 1
+    # while os.path.exists(f"{save_path}{i}") or os.path.exists(
+    #         f"{save_path}{i}__complete"
+    # ):
+    #     i += 1
+    # save_path = f"{save_path}{i}"
+    # kwargs["save_path"] = save_path
+    # if args.save:
+    #     os.mkdir(save_path)
+    return kwargs
