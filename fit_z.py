@@ -10,6 +10,7 @@ import os
 import sys
 import argparse
 import utils
+from objectives import *
 
 sys.path.append(os.getcwd())
 sys.path.append(os.getcwd() + '/PixelCNN')
@@ -18,7 +19,7 @@ os.environ["CUDA_VISIBLE_DEVICES"] = "5"
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--architecture', type=str, default='pixelcnn')
-parser.add_argument('--loss', type=str)
+parser.add_argument('--loss', type=str, default='forward_kl')
 parser.add_argument('--z_channels', type=int, default=2)
 parser.add_argument('--log_freq', type=int, default=5)
 parser.add_argument('--lr', type=float, default=1e-3)
@@ -64,17 +65,23 @@ eps = 1e-7
 train_data, test_data, train_data_evaluation = LoadData(opt)
 
 if args.architecture == "pixelcnn":
-    latent_data_shape = [-1, opt['z_channels'], 8, 8]
-    gen_img_shape = [opt['gen_samples']] + [latent_data_shape[1] * 2] + latent_data_shape[2:]
+    latent_z_shape = [opt['batch_size'], opt['z_channels'], 8, 8]
+    output_size = [opt['gen_samples']] + [latent_z_shape[1] * 2] + latent_z_shape[2:]
     cat_dim = 1
-    model = PixelCNN(device=opt['device'], c_in=latent_data_shape[1] * 2, c_hidden=opt['c_hidden'],
-                     layer_num=opt['layer_num']).to(opt["device"])
+    model = PixelCNN(device=opt['device'], input_size=latent_z_shape, c_hidden=opt['c_hidden'],
+                     output_size=output_size, layer_num=opt['layer_num']).to(opt["device"])
 elif args.architecture == 'rnn':
-    latent_data_shape = [-1, opt['z_channels'] * 8 * 8, 1]
-    gen_img_shape = [opt['gen_samples']] + [latent_data_shape[1]] + [latent_data_shape[2] * 2]
+    latent_z_shape = [opt['batch_size'], opt['z_channels'] * 8 * 8, 1]
+    output_size = [opt['gen_samples']] + [latent_z_shape[1]] + [latent_z_shape[2] * 2]
     cat_dim = 2
-    model = RNN(device=opt['device'], input_size=latent_data_shape[2] * 2, hidden_size=opt['c_hidden'],
-                num_layers=2, output_size=latent_data_shape[2] * 2).to(opt["device"])
+    model = RNN(device=opt['device'], input_size=latent_z_shape, hidden_size=opt['c_hidden'],
+                num_layers=2, output_size=output_size).to(opt["device"])
+elif args.architecture == 'vae':
+    latent_z_shape = [opt['batch_size'], opt['z_channels'] * 8 * 8]
+    output_size = [opt['gen_samples']] + [latent_z_shape[1]]
+    cat_dim = 2
+    model = linear_VAE(device=opt['device'], input_size=latent_z_shape, hidden_size=opt['c_hidden'],
+                       output_size=output_size).to(opt["device"])
 else:
     raise NotImplementedError(args.architecture)
 
@@ -85,41 +92,34 @@ pretrained_VAE.load_state_dict(torch.load(f"{opt['save_path']}model_CIFAR_{str(o
 
 model.train()
 
-KL_list = []
+loss_list = []
 for epoch in range(1, opt['epochs'] + 1):
     model.train()
     for z_mean, z_std in tqdm(train_data):
         optimizer.zero_grad()
-        z_mean = z_mean.reshape(latent_data_shape).to(opt["device"])
-        z_std = z_std.reshape(latent_data_shape).to(opt["device"])
-        z = torch.cat((z_mean, z_std), dim=cat_dim)
-        z_hat_mean, z_hat_std = model.forward(z)
-        
-        z_mean = z_mean.view([-1, np.prod(latent_data_shape[1:])])
-        z_std = z_std.view([-1, np.prod(latent_data_shape[1:])])
-        z_hat_mean = z_hat_mean.view([-1, np.prod(latent_data_shape[1:])])
-        z_hat_std = z_hat_std.view([-1, np.prod(latent_data_shape[1:])])
+        z_mean = z_mean.reshape(latent_z_shape).to(opt["device"])
+        z_std = z_std.reshape(latent_z_shape).to(opt["device"])
+        z = z_mean + z_std * torch.randn_like(z_std)
+        z1, z2, z3 = model.forward(z)
 
         if opt['loss'] == 'forward_kl':
-            kl = (torch.log(z_hat_std + eps) - torch.log(z_std + eps) +
-              (z_std ** 2 + (z_mean - z_hat_mean) ** 2) / (2 * z_hat_std ** 2) - 0.5).sum(1).mean(0)  # Forward KL
-        # kl = (torch.log(z_hat_std + eps) +
-        #       (z_std ** 2 + (z_mean - z_hat_mean) ** 2) / (2 * z_hat_std ** 2)).mean(1).mean(0)
+            loss = forward_kl(latent_z_shape, z_mean, z_std, z_hat_mean=z1, z_hat_std=z2)
         elif opt['loss'] == 'reverse_kl':
-            kl = (torch.log(z_std + eps) - torch.log(z_hat_std + eps) +
-              (z_hat_std ** 2 + (z_hat_mean - z_mean) ** 2) / (2 * z_std ** 2) - 0.5).sum(1).mean(0)  # Reverse KL
-        elif opt['loss'] == 'mean':
-            kl = ((z_hat_mean - z_mean) ** 2 + (z_hat_std - 1.) ** 2).sum(1).mean(0)  # Reverse KL
+            loss = reverse_kl(latent_z_shape, z_mean, z_std, z_hat_mean=z1, z_hat_std=z2)
+        # elif opt['loss'] == 'mse':
+        #     loss = mse(latent_z_shape, z_mean, z_std, z_hat_mean, z_hat_std)
+        elif opt['loss'] == 'elbo':
+            loss = elbo(latent_z_shape, z_mean, z_std, z_hat_mean=z1, z_hat_std=z2, s_mean=z3[0], s_std=z3[1])
         else:
             raise NotImplementedError(opt['loss'])
 
-        kl.backward()
+        loss.backward()
         optimizer.step()
         # print("KL", kl.item())
-        KL_list.append(kl.item())
+        loss_list.append(loss.item())
 
     model.eval()
-    gen_z, _ = model.sample(img_shape=gen_img_shape)
+    gen_z, _ = model.sample()
 
     if opt['visualize'] and (epoch) % opt['log_freq'] == 0:
         pxz_params = pretrained_VAE.decoder(gen_z)
@@ -128,16 +128,18 @@ for epoch in range(1, opt['epochs'] + 1):
         ax = ax.flatten()
         for i in range(20):
             ax[i].imshow(x_hat[i, :].detach().cpu().numpy().transpose(1, 2, 0))
+            ax[i].axis('off')
         plt.suptitle("Images generated from trained z")
+        fig.tight_layout()
         plt.show()
 
         plt.figure()
-        plt.plot(KL_list)
+        plt.plot(loss_list)
         plt.show()
 
-        KL_list = []
+        loss_list = []
 
-        z_dim = np.prod(latent_data_shape[1:])
+        z_dim = np.prod(latent_z_shape[1:])
         gen_z = gen_z.reshape(opt['gen_samples'], z_dim).to("cpu")
         fig, ax = plt.subplots(2, 5, figsize=(20, 6))
         ax = ax.flatten()
@@ -166,4 +168,3 @@ for epoch in range(1, opt['epochs'] + 1):
 
     if opt['if_save_model']:
         torch.save(model.state_dict(), f"{opt['save_path']}{opt['architecture']}_{str(opt['z_channels'])}.pth")
-
