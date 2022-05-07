@@ -67,7 +67,7 @@ class PixelCNN(nn.Module):
         gen_z_std = img[:, int(self.c_in / 2):, :, :]
         epsilon = torch.randn_like(gen_z_mean)
         gen_z = epsilon * gen_z_std + gen_z_mean
-        return gen_z
+        return gen_z, (gen_z_mean, gen_z_std)
 
 
 # Recurrent neural network (many-to-one)
@@ -82,14 +82,14 @@ class RNN(nn.Module):
 
     def forward(self, x):
         # Set initial hidden and cell states
-        h0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size).to(self.device)
-        c0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size).to(self.device)
+        h0 = torch.randn(self.num_layers, x.size(0), self.hidden_size).to(self.device)
+        c0 = torch.randn(self.num_layers, x.size(0), self.hidden_size).to(self.device)
 
         # Forward propagate LSTM
         out, _ = self.lstm(x, (h0, c0))  # out: tensor of shape (batch_size, seq_length, hidden_size)
 
         # Decode the hidden state of the last time step
-        out = self.fc(out[:, :, :])  # out: tensor of shape (batch_size, seq_length, output_size)
+        out = self.fc(out)  # out: tensor of shape (batch_size, seq_length, output_size)
         return out[:, :, :1], F.softplus(out[:, :, 1:])
 
     @torch.no_grad()
@@ -104,4 +104,4 @@ class RNN(nn.Module):
         gen_z_std = img[:, :, 1:]
         epsilon = torch.randn_like(gen_z_mean)
         gen_z = epsilon * gen_z_std + gen_z_mean
-        return gen_z
+        return gen_z, (gen_z_mean, gen_z_std)
