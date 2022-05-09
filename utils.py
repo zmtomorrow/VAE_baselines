@@ -84,10 +84,9 @@ class LatentBlockDataset(Dataset):
     Loads latent block dataset
     """
     def __init__(self, file_path, train=True, transform=None):
-        print('Loading latent block data')
         with open(file_path, 'rb') as handle:
             data = pickle.load(handle)
-        print('Done loading latent block data')
+        print('Done loading pretrained latent block data')
 
         self.data = data
         self.transform = transform

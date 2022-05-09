@@ -56,3 +56,18 @@ def elbo(shape, z_mean, z_std, z_hat_mean, z_hat_std, s_mean, s_std):
     kl = (torch.log(s_std + eps) +
           (1 ** 2 + (0 - s_mean) ** 2) / (2 * s_std ** 2)).sum(1).mean(0)
     return -(llk - kl)
+
+
+def mixture_of_gaussian(shape, z, z_hat_mean, z_hat_std, z_hat_pi, mixture_num, cat_dim):
+    mean_list = torch.chunk(z_hat_mean, mixture_num, dim=cat_dim)
+    std_list = torch.chunk(z_hat_std, mixture_num, dim=cat_dim)
+    pi_list = torch.chunk(z_hat_pi, mixture_num, dim=cat_dim)
+    pi_array = torch.softmax(torch.stack(pi_list, dim=0), dim=0)
+    llk = 0
+    for i in range(len(mean_list)):
+        mean = mean_list[i]
+        std = std_list[i]
+        pi = pi_array[i, :]
+        llk += (pi * (-torch.log(std + eps) - 0.5 * ((z - mean) ** 2) / (std ** 2 + eps))).sum()
+    llk /= z.shape[0]
+    return -llk

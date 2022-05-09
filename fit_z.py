@@ -3,7 +3,6 @@ import torch.nn.functional as F
 from torch import optim
 from utils import *
 from model import *
-from PixelCNN.network import *
 import numpy as np
 from tqdm import tqdm
 import os
@@ -22,6 +21,7 @@ parser.add_argument('--architecture', type=str, default='pixelcnn')
 parser.add_argument('--loss', type=str, default='forward_kl')
 parser.add_argument('--z_channels', type=int, default=2)
 parser.add_argument('--log_freq', type=int, default=5)
+parser.add_argument('--mixture_num', type=int, default=1)
 parser.add_argument('--lr', type=float, default=1e-3)
 args = parser.parse_args()
 opt = utils.process_args(args)
@@ -38,7 +38,7 @@ else:
 opt['data_set'] = 'latent'
 opt['x_dis'] = 'Logistic'  ## or MixLogistic
 # opt['z_channels'] = 2  ## 2*64
-opt['epochs'] = 100
+opt['epochs'] = 10
 opt['dataset_path'] = f"./save/latent_CIFAR_{opt['z_channels']}.pickle"
 opt['save_path'] = './save/'
 opt['result_path'] = './result/'
@@ -58,6 +58,7 @@ opt['c_hidden'] = 128
 opt['layer_num'] = 15
 opt['visualize'] = True
 opt['gen_samples'] = 100
+
 np.random.seed(opt['seed'])
 torch.manual_seed(opt['seed'])
 eps = 1e-7
@@ -69,7 +70,8 @@ if args.architecture == "pixelcnn":
     output_size = [opt['gen_samples']] + [latent_z_shape[1] * 2] + latent_z_shape[2:]
     cat_dim = 1
     model = PixelCNN(device=opt['device'], input_size=latent_z_shape, c_hidden=opt['c_hidden'],
-                     output_size=output_size, layer_num=opt['layer_num']).to(opt["device"])
+                     output_size=output_size, layer_num=opt['layer_num'], mixture_num=opt['mixture_num'],
+                     cat_dim=cat_dim).to(opt["device"])
 elif args.architecture == 'rnn':
     latent_z_shape = [opt['batch_size'], opt['z_channels'] * 8 * 8, 1]
     output_size = [opt['gen_samples']] + [latent_z_shape[1]] + [latent_z_shape[2] * 2]
@@ -110,6 +112,9 @@ for epoch in range(1, opt['epochs'] + 1):
         #     loss = mse(latent_z_shape, z_mean, z_std, z_hat_mean, z_hat_std)
         elif opt['loss'] == 'elbo':
             loss = elbo(latent_z_shape, z_mean, z_std, z_hat_mean=z1, z_hat_std=z2, s_mean=z3[0], s_std=z3[1])
+        elif opt['loss'] == 'mixture_of_gaussian':
+            loss = mixture_of_gaussian(latent_z_shape, z, z_hat_mean=z1, z_hat_std=z2, z_hat_pi=z3,
+                                       mixture_num=opt['mixture_num'], cat_dim=cat_dim)
         else:
             raise NotImplementedError(opt['loss'])
 
@@ -129,7 +134,7 @@ for epoch in range(1, opt['epochs'] + 1):
         for i in range(20):
             ax[i].imshow(x_hat[i, :].detach().cpu().numpy().transpose(1, 2, 0))
             ax[i].axis('off')
-        plt.suptitle("Images generated from trained z")
+        plt.suptitle("Images generated from p eta (z)")
         fig.tight_layout()
         plt.show()
 

@@ -6,6 +6,7 @@ from torch.distributions.bernoulli import Bernoulli
 import numpy as np
 import torch.nn.functional as F
 from utils import batch_KL_diag_gaussian_std
+eps = 1e-7
 
 
 class VAE(nn.Module):
@@ -54,14 +55,17 @@ class VAE(nn.Module):
             return self.sample_op(pxz_params)
 
 
+# The following is the autoregressive model for learning p_eta(z)
 
 class PixelCNN(nn.Module):
-    def __init__(self, device, input_size, output_size, c_hidden, layer_num):
+    def __init__(self, device, mixture_num, cat_dim, input_size, output_size, c_hidden, layer_num):
         super().__init__()
+        self.mixture_num = mixture_num
+        self.cat_dim = cat_dim
         self.input_size = input_size
         self.output_size = output_size
         self.c_in = input_size[1]
-        self.c_out = output_size[1]
+        self.c_out = (mixture_num * 3) * self.c_in  # pi, mean, std
         self.c_hidden = c_hidden
         self.device = device
         # Initial convolutions skipping the center pixel
@@ -94,7 +98,10 @@ class PixelCNN(nn.Module):
         out = self.conv_out(F.elu(h_stack))
 
         # Output dimensions: [Batch, Channels, Height, Width]
-        return out[:, :int(self.c_in), :, :], F.softplus(out[:, int(self.c_in):, :, :]), None
+        mean = out[:, :int(self.c_in) * self.mixture_num, :, :]
+        std = F.softplus(out[:, int(self.c_in) * self.mixture_num: int(self.c_in) * self.mixture_num * 2, :, :])
+        pi = F.softplus(out[:, int(self.c_in) * self.mixture_num * 2:, :, :])
+        return mean, std, pi
 
     @torch.no_grad()
     def sample(self):
@@ -107,18 +114,30 @@ class PixelCNN(nn.Module):
                              should be -1 in the input tensor.
         """
         # Create empty image
-        img_mean = 0. * torch.ones(self.input_size, dtype=torch.float).to(self.device)
-        img_std = 0. * torch.ones(self.input_size, dtype=torch.float).to(self.device)
+        # img_mean = 0. * torch.ones(self.input_size, dtype=torch.float).to(self.device)
+        # img_std = 0. * torch.ones(self.input_size, dtype=torch.float).to(self.device)
         img = 0. * torch.ones(self.input_size, dtype=torch.float).to(self.device)
         # Generation loop
         for h in range(self.input_size[2]):
             for w in range(self.input_size[3]):
-                pred_mean, pred_std, _ = self.forward(img)
-                pred = pred_mean + pred_std * torch.randn_like(pred_std)
+                pred_mean, pred_std, pred_pi = self.forward(img)
+                if self.mixture_num == 1:
+                    pred = pred_mean + pred_std * torch.randn_like(pred_std)
+                else:
+                    mean_list = torch.chunk(pred_mean, self.mixture_num, dim=self.cat_dim)
+                    std_list = torch.chunk(pred_std, self.mixture_num, dim=self.cat_dim)
+                    pi_list = torch.chunk(pred_pi, self.mixture_num, dim=self.cat_dim)
+                    mean = torch.stack(mean_list, dim=-1)
+                    std = torch.stack(std_list, dim=-1)
+                    gaussian_sample = mean + std * torch.randn_like(std)
+                    pi = torch.stack(pi_list, dim=-1) + eps
+                    m = torch.distributions.one_hot_categorical.OneHotCategorical(probs=pi) # The normalization is automatic
+                    categorical_sample = m.sample()
+                    pred = (gaussian_sample * categorical_sample).sum(-1)
                 img[:, :, h, w] = pred[:, :, h, w]
-                img_mean[:, :, h, w] = pred_mean[:, :, h, w]
-                img_std[:, :, h, w] = pred_std[:, :, h, w]
-        return img, (img_mean, img_std)
+                # img_mean[:, :, h, w] = pred_mean[:, :, h, w]
+                # img_std[:, :, h, w] = pred_std[:, :, h, w]
+        return img, (None, None)
 
 
 # Recurrent neural network (many-to-one)
@@ -190,3 +209,5 @@ class linear_VAE(nn.Module):
         img_mean, img_std = img[:, :self.output_size[1]], F.softplus(img[:, self.output_size[1]:])
         img = img_mean + img_std * torch.randn_like(img_std)
         return img, (img_mean, img_std)
+
+
