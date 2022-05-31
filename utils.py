@@ -54,18 +54,22 @@ def LoadData(opt):
                                                  transform=torchvision.transforms.ToTensor())
 
     elif opt['data_set'] == 'MNIST':
-        train_data = torchvision.datasets.MNIST(opt['dataset_path'], train=True, download=False,
+        train_data = torchvision.datasets.MNIST(opt['dataset_path'], train=True, download=True,
                                                 transform=torchvision.transforms.ToTensor())
-        test_data = torchvision.datasets.MNIST(opt['dataset_path'], train=False, download=False,
-                                               transform=torchvision.transforms.ToTensor())
+        test_data = torchvision.datasets.MNIST(opt['dataset_path'], train=False, download=True,
+                                               transform=torchvision.transforms.Compose(
+                                                   [torchvision.transforms.Resize(32),
+                                                    torchvision.transforms.ToTensor()]
+                                               ),)
 
     elif opt['data_set'] == 'BinaryMNIST':
         trans = torchvision.transforms.Compose([
+            torchvision.transforms.Resize(32),
             torchvision.transforms.ToTensor(),
             lambda x: torch.round(x),
         ])
-        train_data = torchvision.datasets.MNIST(opt['dataset_path'], train=True, download=False, transform=trans)
-        test_data = torchvision.datasets.MNIST(opt['dataset_path'], train=False, download=False, transform=trans)
+        train_data = torchvision.datasets.MNIST(opt['dataset_path'], train=True, download=True, transform=trans)
+        test_data = torchvision.datasets.MNIST(opt['dataset_path'], train=False, download=True, transform=trans)
 
     elif opt["data_set"] == "latent":
         train_data = LatentBlockDataset(opt['dataset_path'], train=True, transform=None)

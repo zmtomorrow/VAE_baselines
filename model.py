@@ -14,7 +14,11 @@ class VAE(nn.Module):
         super().__init__()
         self.z_dim = opt['z_channels'] * 64
         self.device = opt['device']
-        self.encoder = fc_encoder(latent_channels=opt['z_channels'])
+        if opt['data_set'] == 'MNIST' or opt['data_set'] == 'BinaryMNIST':
+            input_channels = 1
+        else:
+            input_channels = 3
+        self.encoder = fc_encoder(input_channels=input_channels, latent_channels=opt['z_channels'])
         if opt['x_dis'] == 'MixLogistic':
             self.decoder = fc_decoder(latent_channels=opt['z_channels'], out_channels=100)
             self.criterion = lambda data, params: discretized_mix_logistic_uniform(data, params)
@@ -100,7 +104,7 @@ class PixelCNN(nn.Module):
         # Output dimensions: [Batch, Channels, Height, Width]
         mean = out[:, :int(self.c_in) * self.mixture_num, :, :]
         std = F.softplus(out[:, int(self.c_in) * self.mixture_num: int(self.c_in) * self.mixture_num * 2, :, :])
-        pi = F.softplus(out[:, int(self.c_in) * self.mixture_num * 2:, :, :])
+        pi = out[:, int(self.c_in) * self.mixture_num * 2:, :, :]
         return mean, std, pi
 
     @torch.no_grad()

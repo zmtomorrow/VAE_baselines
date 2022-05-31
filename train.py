@@ -21,7 +21,7 @@ else:
     opt["device"] = torch.device("cpu")
     opt["if_cuda"] = False
 
-opt['data_set'] = 'CIFAR'
+opt['data_set'] = 'MNIST'
 opt['x_dis'] = 'Logistic'  ## or MixLogistic
 opt['z_channels'] = 2  ## 2*64
 opt['epochs'] = 200

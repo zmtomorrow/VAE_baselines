@@ -20,11 +20,11 @@ class Residual(nn.Module):
 
 
 class fc_encoder(nn.Module):
-    def __init__(self, channels=256, latent_channels=64):
+    def __init__(self, input_channels, channels=256, latent_channels=64):
         super(fc_encoder, self).__init__()
         self.latent_channels = latent_channels
         self.encoder = nn.Sequential(
-            nn.Conv2d(3, channels, 4, 2, 1, bias=False),
+            nn.Conv2d(input_channels, channels, 4, 2, 1, bias=False),
             nn.BatchNorm2d(channels),
             nn.ReLU(True),
             nn.Conv2d(channels, channels, 4, 2, 1, bias=False),
