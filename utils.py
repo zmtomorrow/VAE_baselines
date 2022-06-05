@@ -1,12 +1,7 @@
 import torchvision
-from torch.utils import data
+
 import torch
-import numpy as np
-from tqdm import tqdm
-from torchvision import transforms
-import matplotlib.pyplot as plt
-from torch.utils.data import Dataset
-import pickle
+
 import argparse
 import os
 from typing import Tuple, List, Dict
@@ -34,74 +29,6 @@ def to_one_hot(tensor, n, fill_with=1.):
     return one_hot
 
 
-def LoadData(opt):
-    if opt['data_set'] == 'SVHN':
-        train_data = torchvision.datasets.SVHN(opt['dataset_path'], split='train', download=False,
-                                               transform=torchvision.transforms.ToTensor())
-        test_data = torchvision.datasets.SVHN(opt['dataset_path'], split='test', download=False,
-                                              transform=torchvision.transforms.ToTensor())
-
-    elif opt['data_set'] == 'CIFAR':
-        if opt['data_aug'] == True:
-            transform = transforms.Compose([
-                transforms.RandomCrop(32, padding=4),
-                transforms.RandomHorizontalFlip(0.5),
-                transforms.ToTensor()])
-        else:
-            transform = torchvision.transforms.ToTensor()
-        train_data = torchvision.datasets.CIFAR10(opt['dataset_path'], train=True, download=False, transform=transform)
-        test_data = torchvision.datasets.CIFAR10(opt['dataset_path'], train=False, download=False,
-                                                 transform=torchvision.transforms.ToTensor())
-
-    elif opt['data_set'] == 'MNIST':
-        train_data = torchvision.datasets.MNIST(opt['dataset_path'], train=True, download=True,
-                                                transform=torchvision.transforms.ToTensor())
-        test_data = torchvision.datasets.MNIST(opt['dataset_path'], train=False, download=True,
-                                               transform=torchvision.transforms.Compose(
-                                                   [torchvision.transforms.Resize(32),
-                                                    torchvision.transforms.ToTensor()]
-                                               ),)
-
-    elif opt['data_set'] == 'BinaryMNIST':
-        trans = torchvision.transforms.Compose([
-            torchvision.transforms.Resize(32),
-            torchvision.transforms.ToTensor(),
-            lambda x: torch.round(x),
-        ])
-        train_data = torchvision.datasets.MNIST(opt['dataset_path'], train=True, download=True, transform=trans)
-        test_data = torchvision.datasets.MNIST(opt['dataset_path'], train=False, download=True, transform=trans)
-
-    elif opt["data_set"] == "latent":
-        train_data = LatentBlockDataset(opt['dataset_path'], train=True, transform=None)
-        test_data = LatentBlockDataset(opt['dataset_path'], train=False, transform=None)
-    else:
-        raise NotImplementedError
-
-    train_data_loader = data.DataLoader(train_data, batch_size=opt['batch_size'], shuffle=True)
-    test_data_loader = data.DataLoader(test_data, batch_size=opt['test_batch_size'], shuffle=False)
-    train_data_evaluation = data.DataLoader(train_data, batch_size=opt['test_batch_size'], shuffle=False)
-    return train_data_loader, test_data_loader, train_data_evaluation
-
-
-class LatentBlockDataset(Dataset):
-    """
-    Loads latent block dataset
-    """
-    def __init__(self, file_path, train=True, transform=None):
-        with open(file_path, 'rb') as handle:
-            data = pickle.load(handle)
-        print('Done loading pretrained latent block data')
-
-        self.data = data
-        self.transform = transform
-
-    def __getitem__(self, index):
-        mean = self.data['mean'][index]
-        std = self.data['std'][index]
-        return mean, std
-
-    def __len__(self):
-        return len(self.data['mean'])
 
 
 def process_args(args: argparse.Namespace) -> Dict:
@@ -120,4 +47,7 @@ def process_args(args: argparse.Namespace) -> Dict:
     # kwargs["save_path"] = save_path
     # if args.save:
     #     os.mkdir(save_path)
+    kwargs['save_path'] = kwargs['save_path'] + kwargs['data_set'] + '/'
+    if not os.path.exists(kwargs['save_path']):
+        os.mkdir(kwargs['save_path'])
     return kwargs

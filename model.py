@@ -2,14 +2,141 @@ import torch
 import torch.nn as nn
 from network import *
 from distributions import *
+from utils import *
+from dataset import *
+import torch.distributions as dis
 from torch.distributions.bernoulli import Bernoulli
 import numpy as np
 import torch.nn.functional as F
-from utils import batch_KL_diag_gaussian_std
+from torch import optim
+from custom_optimizer import SGLD
+
 eps = 1e-7
 
 
-class VAE(nn.Module):
+class dense_VAE(nn.Module):
+    def __init__(self, opt):
+        super().__init__()
+        self.device = opt['device']
+        self.data_set = opt['data_set']
+        self.z_dim = opt['z_dim']
+        if opt['data_set'] == 'MNIST' or opt['data_set'] == 'BinaryMNIST' :
+            self.input_dim = 32 * 32
+            self.input_shape = [1, 32, 32]
+        elif opt['data_set'] == 'ColoredMNIST':
+            self.input_dim = 3 * 32 * 32
+            self.input_shape = [3, 32, 32]
+
+        self.encoder = dense_encoder(self.input_dim, self.z_dim)
+        if opt['x_dis'] == 'MixLogistic':
+            self.decoder = dense_decoder(self.input_dim, self.z_dim)
+            self.criterion = lambda real, fake: Bernoulli(logits=fake).log_prob(real).sum([1, 2, 3]).mean()
+            self.sample_op = lambda x: Bernoulli(logits=x).sample()
+        elif opt['x_dis'] == 'Logistic':
+            self.decoder = dense_decoder(self.input_dim, self.z_dim)
+            self.criterion = lambda real, fake: Bernoulli(logits=fake).log_prob(real).sum([1, 2, 3]).mean()
+            self.sample_op = lambda x: Bernoulli(logits=x).sample()
+
+        if opt['data_set'] == 'MNIST' or opt['data_set'] == 'BinaryMNIST':
+            self.classifier = mnist_classifier(self.z_dim)
+        elif opt['data_set'] == 'ColoredMNIST':
+            self.classifier = colormnist_classifier(self.z_dim)
+        else:
+            raise NotImplementedError(opt['data_set'])
+        self.prior_mu = torch.zeros(self.z_dim, requires_grad=False)
+        self.prior_std = torch.ones(self.z_dim, requires_grad=False)
+        self.params = list(self.parameters())
+
+    def posterior_forward(self, params, x):
+        z_mu, z_std = params[0], F.softplus(params[1])
+        eps = torch.randn_like(z_mu).to(self.device)
+        zs = eps.mul(z_std).add_(z_mu)
+        pxz_params = self.decoder(zs)
+        pxz_params = pxz_params.reshape([-1] + self.input_shape)
+        loglikelihood = self.criterion(x, pxz_params)
+        kl = batch_KL_diag_gaussian_std(z_mu, z_std, self.prior_mu.to(self.device), self.prior_std.to(self.device))
+        elbo = loglikelihood - kl
+        return torch.mean(elbo) / np.log(2.)
+
+    def forward(self, x):
+        z_mu, z_std = self.encoder(x)
+        eps = torch.randn_like(z_mu).to(self.device)
+        zs = eps.mul(z_std).add_(z_mu)
+        pxz_params = self.decoder(zs)
+        loglikelihood = self.criterion(x, pxz_params)
+
+        kl = batch_KL_diag_gaussian_std(z_mu, z_std, self.prior_mu.to(self.device), self.prior_std.to(self.device))
+        elbo = loglikelihood - kl
+        return torch.mean(elbo) / np.log(2.)
+
+    def joint_forward(self, x, y, alpha=1.0, return_elbo=False):
+        z_mu, z_std = self.encoder(x)
+        eps = torch.randn_like(z_mu).to(self.device)
+        z = eps.mul(z_std).add_(z_mu)
+        x_out = self.decoder(z)
+        kl = batch_KL_diag_gaussian_std(z_mu, z_std, self.prior_mu.to(self.device), self.prior_std.to(self.device))
+        neg_l = - self.criterion(x, x_out)
+
+        y_z_dis = self.classifier(z)
+        if return_elbo:
+            logpy_z = torch.sum(y * torch.log(y_z_dis + 1e-8), dim=1)
+            return -neg_l + logpy_z - kl
+
+        classification_loss = -torch.sum(y * torch.log(y_z_dis + 1e-8), dim=1).mean()
+        loss = torch.mean(neg_l + kl, dim=0) + alpha * classification_loss
+        return loss
+
+    def sample(self, num=100):
+        with torch.no_grad():
+            eps = torch.randn(num, self.z_dim).to(self.device)
+            pxz_params = self.decoder(eps)
+            samples = self.sample_op(pxz_params)
+            return samples.reshape([-1] + self.input_shape)
+
+    def logpyz(self, z, y):
+        y_z_dis = self.classifier(z.view(-1, self.z_dim))
+        logpy_z = torch.sum(y * torch.log(y_z_dis + 1e-8), dim=1)
+        logp_z = dis.Normal(self.prior_mu.to(self.device), self.prior_std.to(self.device)).log_prob(z).sum(-1)
+        return logpy_z + logp_z
+
+    def conditional_sample(self, y, optimi):
+        loss_list = []
+        self.eval()
+        y = one_hot_labels(y, self.data_set).to(self.device)
+        z_opt = torch.randn(self.z_dim, requires_grad=True)
+        if optimi == 'sgld':
+            optimizer = SGLD([z_opt], lr=0.01)
+        elif optimi == 'adam':
+            optimizer = optim.Adam([z_opt], lr=5e-2)
+        sgld_samples = []
+        z_opt = z_opt.to(self.device)
+        for i in range(0, 100):
+            optimizer.zero_grad()
+            L = -self.logpyz(z_opt, y)
+            L.backward()
+            if optimi == 'sgld':
+                sgld_sample = optimizer.step()
+                sgld_samples.append(sgld_sample)
+            elif optimi == 'adam':
+                optimizer.step()
+
+        with torch.no_grad():
+            if optimi == 'sgld':
+                final_samples = sgld_samples[50:]
+                for k, z_sample in enumerate(final_samples):
+                    vae_out = self.decoder(z_sample.view(1, -1).to(self.device))
+                    if k == 0:
+                        x_sample = self.sample_op(vae_out)
+                    else:
+                        x_sample += self.sample_op(vae_out)
+                x_sample /= len(final_samples)
+            elif optimi == 'adam':
+                vae_out = self.decoder(z_opt.view(1, -1))
+                x_sample = self.sample_op(vae_out)
+            return x_sample
+
+
+class conv_VAE(nn.Module):
     def __init__(self, opt):
         super().__init__()
         self.z_dim = opt['z_channels'] * 64
@@ -18,13 +145,13 @@ class VAE(nn.Module):
             input_channels = 1
         else:
             input_channels = 3
-        self.encoder = fc_encoder(input_channels=input_channels, latent_channels=opt['z_channels'])
+        self.encoder = conv_encoder(input_channels=input_channels, latent_channels=opt['z_channels'])
         if opt['x_dis'] == 'MixLogistic':
-            self.decoder = fc_decoder(latent_channels=opt['z_channels'], out_channels=100)
+            self.decoder = conv_decoder(latent_channels=opt['z_channels'], out_channels=100)
             self.criterion = lambda data, params: discretized_mix_logistic_uniform(data, params)
             self.sample_op = lambda params: discretized_mix_logistic_sample(params)
         elif opt['x_dis'] == 'Logistic':
-            self.decoder = fc_decoder(latent_channels=opt['z_channels'], out_channels=9)
+            self.decoder = conv_decoder(latent_channels=opt['z_channels'], out_channels=9)
             self.criterion = lambda data, params: discretized_logistic(data, params)
             self.sample_op = lambda params: discretized_logistic_sample(params)
 
@@ -135,7 +262,8 @@ class PixelCNN(nn.Module):
                     std = torch.stack(std_list, dim=-1)
                     gaussian_sample = mean + std * torch.randn_like(std)
                     pi = torch.stack(pi_list, dim=-1) + eps
-                    m = torch.distributions.one_hot_categorical.OneHotCategorical(probs=pi) # The normalization is automatic
+                    m = torch.distributions.one_hot_categorical.OneHotCategorical(
+                        probs=pi)  # The normalization is automatic
                     categorical_sample = m.sample()
                     pred = (gaussian_sample * categorical_sample).sum(-1)
                 img[:, :, h, w] = pred[:, :, h, w]
@@ -213,5 +341,3 @@ class linear_VAE(nn.Module):
         img_mean, img_std = img[:, :self.output_size[1]], F.softplus(img[:, self.output_size[1]:])
         img = img_mean + img_std * torch.randn_like(img_std)
         return img, (img_mean, img_std)
-
-
