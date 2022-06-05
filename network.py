@@ -55,20 +55,22 @@ class dense_encoder(nn.Module):
         h = F.relu(self.bn1(self.fc1(x)))
         h = F.relu(self.bn2(self.fc2(h)))
         mu = self.fc31(h)
-        std = torch.nn.functional.softplus(self.fc32(h))
+        std = F.softplus(self.fc32(h))
         return mu, std
 
 
 class dense_decoder(nn.Module):
-    def __init__(self, i_dim, z_dim, if_bn=True):
+    def __init__(self, i_dim, z_dim, i_shape, i_channel_multiply, if_bn=True):
         super().__init__()
         self.h_dim = 500
         self.z_dim = z_dim
         self.i_dim = i_dim
+        self.i_shape = i_shape
+        self.i_channel_multiply = i_channel_multiply
 
         self.fc1 = nn.Linear(self.z_dim, self.h_dim)
         self.fc2 = nn.Linear(self.h_dim, self.h_dim)
-        self.fc3 = nn.Linear(self.h_dim, self.i_dim)
+        self.fc3 = nn.Linear(self.h_dim, self.i_dim * self.i_channel_multiply)
         if if_bn:
             self.bn1 = nn.BatchNorm1d(self.h_dim)
             self.bn2 = nn.BatchNorm1d(self.h_dim)
@@ -80,40 +82,11 @@ class dense_decoder(nn.Module):
         h = F.relu(self.bn1(self.fc1(z)))
         h = F.relu(self.bn2(self.fc2(h)))
         h = self.fc3(h)
-        return h.view(-1, 1, 32, 32)
-
-
-# class dense_encoder(nn.Module):
-#     def __init__(self, input_dim, output_dim, latent_dim):
-#         super(dense_encoder, self).__init__()
-#         self.latent_dim = latent_dim
-#         self.input_dim = input_dim
-#         self.output_dim = output_dim
-#         self.encoder = nn.Sequential(nn.Linear(self.input_dim, 100),
-#                                      nn.Linear(100, self.latent_dim * 2))
-#
-#     def forward(self, x):
-#         z = self.encoder(x)
-#         return z[:, :self.latent_dim].view(x.size(0), -1), F.softplus(
-#             z[:, self.latent_dim:].view(x.size(0), -1))
-#
-#
-# class dense_decoder(nn.Module):
-#     def __init__(self, input_dim, output_dim, latent_dim):
-#         super(dense_decoder, self).__init__()
-#         self.latent_dim = latent_dim
-#         self.input_dim = input_dim
-#         self.output_dim = output_dim
-#         self.decoder = nn.Sequential(nn.Linear(self.latent_dim, 100),
-#                                      nn.Linear(100, self.input_dim))
-#
-#     def forward(self, z):
-#         #         print('here', z.shape)
-#         return self.decoder(z)
+        return h.view([-1] + [self.i_shape[0] * self.i_channel_multiply] + self.i_shape[1:])
 
 
 class conv_encoder(nn.Module):
-    def __init__(self, input_channels, channels=256, latent_channels=64):
+    def __init__(self, input_channels, channels, latent_channels):
         super(conv_encoder, self).__init__()
         self.latent_channels = latent_channels
         self.encoder = nn.Sequential(
@@ -135,7 +108,7 @@ class conv_encoder(nn.Module):
 
 
 class conv_decoder(nn.Module):
-    def __init__(self, channels=256, latent_channels=64, out_channels=100):
+    def __init__(self, channels, latent_channels, out_channels):
         super(conv_decoder, self).__init__()
         self.decoder = nn.Sequential(
             nn.Conv2d(latent_channels, channels, 1, bias=False),
@@ -247,17 +220,19 @@ class GatedMaskedConv(nn.Module):
 class mnist_classifier(nn.Module):
     def __init__(self, z_dim):
         super(mnist_classifier, self).__init__()
+        self.z_dim = z_dim
         self.ntwk = nn.Sequential(nn.Linear(z_dim, 10), nn.Softmax())
 
-    def forward(self, x):
-        return self.ntwk(x)
+    def forward(self, z):
+        return self.ntwk(z.view(-1, self.z_dim))
 
 
-class colormnist_classifier(nn.Module):
+class colored_mnist_classifier(nn.Module):
     def __init__(self, z_dim):
-        super(colormnist_classifier, self).__init__()
+        super(colored_mnist_classifier, self).__init__()
+        self.z_dim = z_dim
         self.ntwk_1 = nn.Sequential(nn.Linear(z_dim, 10), nn.Softmax())
         self.ntwk_2 = nn.Sequential(nn.Linear(z_dim, 2), nn.Softmax())
 
-    def forward(self, x):
-        return torch.cat((self.ntwk_1(x), self.ntwk_2(x)), dim=1)
+    def forward(self, z):
+        return torch.cat((self.ntwk_1(z.view(-1, self.z_dim)), self.ntwk_2(z.view(-1, self.z_dim))), dim=1)

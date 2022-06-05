@@ -47,7 +47,8 @@ def process_args(args: argparse.Namespace) -> Dict:
     # kwargs["save_path"] = save_path
     # if args.save:
     #     os.mkdir(save_path)
-    kwargs['save_path'] = kwargs['save_path'] + kwargs['data_set'] + '/'
+    kwargs['save_path'] = kwargs['save_path'] + kwargs['data_set'] + '/' + f"architecture_{kwargs['architecture']}" \
+                                                                           f"__alpha_{kwargs['alpha']}/"
     if not os.path.exists(kwargs['save_path']):
         os.mkdir(kwargs['save_path'])
     return kwargs

@@ -50,7 +50,6 @@ def discretized_logistic(x, l):
     centered_x = x - means
     inv_stdv = torch.exp(-torch.clamp(log_scales, min=-7.))
     cdf_plus = torch.sigmoid(inv_stdv * (centered_x + 1. / 255.))
-    # TODO: Why adding 1./255.
     cdf_min = torch.sigmoid(inv_stdv * centered_x)
     cdf_plus = torch.where(x > 0.999, torch.ones(1).to(x.device), cdf_plus)
     cdf_min = torch.where(x < 0.001, torch.zeros(1).to(x.device), cdf_min)

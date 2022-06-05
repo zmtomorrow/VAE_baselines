@@ -45,7 +45,7 @@ np.random.seed(opt['seed'])
 torch.manual_seed(opt['seed'])
 
 train_data, test_data, train_data_evaluation = LoadData(opt)
-model = VAE(opt).to(opt['device'])
+model = conv_VAE(opt).to(opt['device'])
 
 if opt['load_model'] == True:
     model.load_state_dict(torch.load(f"{opt['save_path']}model_{opt['data_set']}_{str(opt['z_channels'])}.pth"))

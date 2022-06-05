@@ -20,27 +20,36 @@ class dense_VAE(nn.Module):
         self.device = opt['device']
         self.data_set = opt['data_set']
         self.z_dim = opt['z_dim']
+        self.alpha = opt['alpha']
         if opt['data_set'] == 'MNIST' or opt['data_set'] == 'BinaryMNIST' :
             self.input_dim = 32 * 32
             self.input_shape = [1, 32, 32]
+            self.i_channel_multiply = 1
         elif opt['data_set'] == 'ColoredMNIST':
             self.input_dim = 3 * 32 * 32
             self.input_shape = [3, 32, 32]
+            self.i_channel_multiply = 3
 
         self.encoder = dense_encoder(self.input_dim, self.z_dim)
+        self.decoder = dense_decoder(self.input_dim, self.z_dim, i_shape=self.input_shape,
+                                     i_channel_multiply=self.i_channel_multiply)
+
         if opt['x_dis'] == 'MixLogistic':
-            self.decoder = dense_decoder(self.input_dim, self.z_dim)
             self.criterion = lambda real, fake: Bernoulli(logits=fake).log_prob(real).sum([1, 2, 3]).mean()
             self.sample_op = lambda x: Bernoulli(logits=x).sample()
         elif opt['x_dis'] == 'Logistic':
-            self.decoder = dense_decoder(self.input_dim, self.z_dim)
+            self.criterion = lambda data, params: discretized_logistic(data, params)
+            self.sample_op = lambda params: discretized_logistic_sample(params)
+        elif opt['x_dis'] == 'Bernoulli':
             self.criterion = lambda real, fake: Bernoulli(logits=fake).log_prob(real).sum([1, 2, 3]).mean()
             self.sample_op = lambda x: Bernoulli(logits=x).sample()
+        else:
+            raise NotImplementedError(opt['x_dis'])
 
         if opt['data_set'] == 'MNIST' or opt['data_set'] == 'BinaryMNIST':
             self.classifier = mnist_classifier(self.z_dim)
         elif opt['data_set'] == 'ColoredMNIST':
-            self.classifier = colormnist_classifier(self.z_dim)
+            self.classifier = colored_mnist_classifier(self.z_dim)
         else:
             raise NotImplementedError(opt['data_set'])
         self.prior_mu = torch.zeros(self.z_dim, requires_grad=False)
@@ -69,7 +78,7 @@ class dense_VAE(nn.Module):
         elbo = loglikelihood - kl
         return torch.mean(elbo) / np.log(2.)
 
-    def joint_forward(self, x, y, alpha=1.0, return_elbo=False):
+    def joint_forward(self, x, y, return_elbo=False):
         z_mu, z_std = self.encoder(x)
         eps = torch.randn_like(z_mu).to(self.device)
         z = eps.mul(z_std).add_(z_mu)
@@ -83,8 +92,22 @@ class dense_VAE(nn.Module):
             return -neg_l + logpy_z - kl
 
         classification_loss = -torch.sum(y * torch.log(y_z_dis + 1e-8), dim=1).mean()
-        loss = torch.mean(neg_l + kl, dim=0) + alpha * classification_loss
+        loss = torch.mean(neg_l + kl, dim=0) + self.alpha * classification_loss
         return loss
+
+    def classify_accuracy(self, x, y):
+        with torch.no_grad():
+            z_mu, z_std = self.encoder(x)
+            eps = torch.randn_like(z_mu).to(self.device)
+            z = eps.mul(z_std).add_(z_mu)
+            y_z_dis = self.classifier(z)
+            if self.data_set == 'BinaryMNIST':
+                accuracy_1 = torch.eq(y_z_dis.argmax(-1), y.argmax(-1)).to(torch.float).mean() * 100
+                accuracy_2 = 100
+            elif self.data_set == 'ColoredMNIST':
+                accuracy_1 = torch.eq(y_z_dis[:, :10].argmax(-1), y[:, :10].argmax(-1)).to(torch.float).mean() * 100
+                accuracy_2 = torch.eq(y_z_dis[:, 10:].argmax(-1), y[:, 10:].argmax(-1)).to(torch.float).mean() * 100
+        return accuracy_1, accuracy_2
 
     def sample(self, num=100):
         with torch.no_grad():
@@ -100,7 +123,6 @@ class dense_VAE(nn.Module):
         return logpy_z + logp_z
 
     def conditional_sample(self, y, optimi):
-        loss_list = []
         self.eval()
         y = one_hot_labels(y, self.data_set).to(self.device)
         z_opt = torch.randn(self.z_dim, requires_grad=True)
@@ -139,21 +161,28 @@ class dense_VAE(nn.Module):
 class conv_VAE(nn.Module):
     def __init__(self, opt):
         super().__init__()
-        self.z_dim = opt['z_channels'] * 64
+        self.z_dim = opt['z_channels'] * 8 * 8
         self.device = opt['device']
-        if opt['data_set'] == 'MNIST' or opt['data_set'] == 'BinaryMNIST':
-            input_channels = 1
-        else:
-            input_channels = 3
-        self.encoder = conv_encoder(input_channels=input_channels, latent_channels=opt['z_channels'])
+        self.data_set = opt['data_set']
+        self.alpha = opt['alpha']
+        input_channels = 3
+
+        self.encoder = conv_encoder(input_channels=input_channels, channels=256, latent_channels=opt['z_channels'])
         if opt['x_dis'] == 'MixLogistic':
-            self.decoder = conv_decoder(latent_channels=opt['z_channels'], out_channels=100)
+            self.decoder = conv_decoder(latent_channels=opt['z_channels'], channels=256, out_channels=100)
             self.criterion = lambda data, params: discretized_mix_logistic_uniform(data, params)
             self.sample_op = lambda params: discretized_mix_logistic_sample(params)
         elif opt['x_dis'] == 'Logistic':
-            self.decoder = conv_decoder(latent_channels=opt['z_channels'], out_channels=9)
+            self.decoder = conv_decoder(latent_channels=opt['z_channels'], channels=256, out_channels=9)
             self.criterion = lambda data, params: discretized_logistic(data, params)
             self.sample_op = lambda params: discretized_logistic_sample(params)
+
+        if opt['data_set'] == 'MNIST' or opt['data_set'] == 'BinaryMNIST':
+            self.classifier = mnist_classifier(self.z_dim)
+        elif opt['data_set'] == 'ColoredMNIST':
+            self.classifier = colored_mnist_classifier(self.z_dim)
+        else:
+            raise NotImplementedError(opt['data_set'])
 
         self.prior_mu = torch.zeros(self.z_dim, requires_grad=False)
         self.prior_std = torch.ones(self.z_dim, requires_grad=False)
@@ -178,6 +207,37 @@ class conv_VAE(nn.Module):
         kl = batch_KL_diag_gaussian_std(z_mu, z_std, self.prior_mu.to(self.device), self.prior_std.to(self.device))
         elbo = loglikelihood - kl
         return torch.mean(elbo) / np.log(2.)
+
+    def joint_forward(self, x, y, return_elbo=False):
+        z_mu, z_std = self.encoder(x)
+        eps = torch.randn_like(z_mu).to(self.device)
+        z = eps.mul(z_std).add_(z_mu)
+        x_out = self.decoder(z)
+        kl = batch_KL_diag_gaussian_std(z_mu, z_std, self.prior_mu.to(self.device), self.prior_std.to(self.device))
+        neg_l = - self.criterion(x, x_out)
+
+        y_z_dis = self.classifier(z)
+        if return_elbo:
+            logpy_z = torch.sum(y * torch.log(y_z_dis + 1e-8), dim=1)
+            return -neg_l + logpy_z - kl
+
+        classification_loss = -torch.sum(y * torch.log(y_z_dis + 1e-8), dim=1).mean()
+        loss = torch.mean(neg_l + kl, dim=0) + self.alpha * classification_loss
+        return loss
+
+    def classify_accuracy(self, x, y):
+        with torch.no_grad():
+            z_mu, z_std = self.encoder(x)
+            eps = torch.randn_like(z_mu).to(self.device)
+            z = eps.mul(z_std).add_(z_mu)
+            y_z_dis = self.classifier(z)
+            if self.data_set == 'BinaryMNIST':
+                accuracy_1 = torch.eq(y_z_dis.argmax(-1), y.argmax(-1)).to(torch.float).mean() * 100
+                accuracy_2 = 100
+            elif self.data_set == 'ColoredMNIST':
+                accuracy_1 = torch.eq(y_z_dis[:, :10].argmax(-1), y[:, :10].argmax(-1)).to(torch.float).mean() * 100
+                accuracy_2 = torch.eq(y_z_dis[:, 10:].argmax(-1), y[:, 10:].argmax(-1)).to(torch.float).mean() * 100
+        return accuracy_1, accuracy_2
 
     def sample(self, num=100):
         with torch.no_grad():
