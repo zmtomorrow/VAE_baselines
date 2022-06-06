@@ -22,16 +22,18 @@ class dense_VAE(nn.Module):
         self.z_dim = opt['z_dim']
         self.alpha = opt['alpha']
         if opt['data_set'] == 'MNIST' or opt['data_set'] == 'BinaryMNIST' :
-            self.input_dim = 32 * 32
+            self.input_dim = 32 * 32 + 10
+            self.image_dim = 32 * 32
             self.input_shape = [1, 32, 32]
             self.i_channel_multiply = 1
         elif opt['data_set'] == 'ColoredMNIST':
-            self.input_dim = 3 * 32 * 32
+            self.input_dim = 3 * 32 * 32 + 10 + 2
+            self.image_dim = 3 * 32 * 32
             self.input_shape = [3, 32, 32]
             self.i_channel_multiply = 3
 
         self.encoder = dense_encoder(self.input_dim, self.z_dim)
-        self.decoder = dense_decoder(self.input_dim, self.z_dim, i_shape=self.input_shape,
+        self.decoder = dense_decoder(self.image_dim, self.z_dim, i_shape=self.input_shape,
                                      i_channel_multiply=self.i_channel_multiply)
 
         if opt['x_dis'] == 'MixLogistic':
@@ -79,7 +81,7 @@ class dense_VAE(nn.Module):
         return torch.mean(elbo) / np.log(2.)
 
     def joint_forward(self, x, y, return_elbo=False):
-        z_mu, z_std = self.encoder(x)
+        z_mu, z_std = self.encoder(x, y)
         eps = torch.randn_like(z_mu).to(self.device)
         z = eps.mul(z_std).add_(z_mu)
         x_out = self.decoder(z)
@@ -97,7 +99,7 @@ class dense_VAE(nn.Module):
 
     def classify_accuracy(self, x, y):
         with torch.no_grad():
-            z_mu, z_std = self.encoder(x)
+            z_mu, z_std = self.encoder(x, y)
             eps = torch.randn_like(z_mu).to(self.device)
             z = eps.mul(z_std).add_(z_mu)
             y_z_dis = self.classifier(z)

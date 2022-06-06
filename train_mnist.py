@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 import torch.nn.functional as F
 
 os.environ["CUDA_VISIBLE_DEVICES"] = "1"
-os.chdir("/home/xzhoubi/hudson/VAE_baselines/")
+os.chdir("/home/ma-user/work/VAE_baseline/")
 
 print(os.getcwd())
 parser = argparse.ArgumentParser()
