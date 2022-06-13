@@ -13,6 +13,54 @@ from custom_optimizer import SGLD
 
 eps = 1e-7
 
+class dc_encoder(nn.Module):
+    def __init__(self, opt, z_dim):
+        super().__init__()
+        self.z_dim = z_dim
+        self.h_size = 256
+        self.encoder = nn.Sequential(
+            nn.Conv2d(3, 32, 6, 2),
+            nn.LeakyReLU(0.2),
+            nn.Conv2d(32, 64, 6),
+            nn.LeakyReLU(0.2),
+            nn.Conv2d(64, 128, 5),
+            nn.LeakyReLU(0.2),
+            nn.Conv2d(128, 256, 5),
+            nn.LeakyReLU(0.2),
+        )
+
+        self.en_mean = nn.Linear(self.h_size, self.z_dim)
+        self.en_logstd = nn.Linear(self.h_size, self.z_dim)
+
+    def forward(self, x):
+        h = self.encoder(x).view(-1, self.h_size)
+        mu = self.en_mean(h)
+        std = torch.exp(self.en_logstd(h))
+        return mu, std
+
+
+class dc_decoder(nn.Module):
+    def __init__(self, opt, z_dim):
+        super().__init__()
+        self.z_dim = z_dim
+        self.h_dim = 256
+        self.fc = nn.Linear(self.z_dim, self.h_dim)
+        self.decoder = nn.Sequential(
+            nn.ConvTranspose2d(256, 128, 5, 2),
+            nn.ReLU(),
+            nn.ConvTranspose2d(128, 64, 5, 2),
+            nn.ReLU(),
+            nn.ConvTranspose2d(64, 32, 5, 2),
+            nn.ReLU(),
+            nn.ConvTranspose2d(32, 3, 4, 1),
+            nn.Sigmoid(),
+        )
+
+    def forward(self, z):
+        h = self.fc(z).view(-1, 256, 1, 1)
+        x = self.decoder(h)
+        return x
+
 
 class dense_VAE(nn.Module):
     def __init__(self, opt):
