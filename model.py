@@ -10,58 +10,159 @@ import numpy as np
 import torch.nn.functional as F
 from torch import optim
 from custom_optimizer import SGLD
+import matplotlib.pyplot as plt
 
 eps = 1e-7
 
-class dc_encoder(nn.Module):
-    def __init__(self, opt, z_dim):
+class dc_VAE(nn.Module):
+    def __init__(self, opt):
         super().__init__()
-        self.z_dim = z_dim
-        self.h_size = 256
-        self.encoder = nn.Sequential(
-            nn.Conv2d(3, 32, 6, 2),
-            nn.LeakyReLU(0.2),
-            nn.Conv2d(32, 64, 6),
-            nn.LeakyReLU(0.2),
-            nn.Conv2d(64, 128, 5),
-            nn.LeakyReLU(0.2),
-            nn.Conv2d(128, 256, 5),
-            nn.LeakyReLU(0.2),
-        )
+        self.device = opt['device']
+        self.data_set = opt['data_set']
+        self.z_dim = opt['z_dim']
+        self.alpha = opt['alpha']
+        if opt['data_set'] == 'MNIST' or opt['data_set'] == 'BinaryMNIST' :
+            self.input_dim = 32 * 32 + 10
+            self.image_dim = 32 * 32
+            self.input_shape = [1, 32, 32]
+            self.h_size = 256 + 10
+            self.i_channel = 1
+            self.i_channel_multiply = 1
+        elif opt['data_set'] == 'ColoredMNIST':
+            self.input_dim = 3 * 32 * 32 + 10 + 2
+            self.image_dim = 3 * 32 * 32
+            self.input_shape = [3, 32, 32]
+            self.h_size = 256 + 10 + 2
+            self.i_channel = 3
+            self.i_channel_multiply = 3
 
-        self.en_mean = nn.Linear(self.h_size, self.z_dim)
-        self.en_logstd = nn.Linear(self.h_size, self.z_dim)
+        self.encoder = dc_encoder(self.h_size, self.z_dim, self.i_channel)
+        self.decoder = dc_decoder(self.z_dim, self.i_channel, self.i_channel_multiply)
+
+        if opt['x_dis'] == 'MixLogistic':
+            self.criterion = lambda real, fake: Bernoulli(logits=fake).log_prob(real).sum([1, 2, 3]).mean()
+            self.sample_op = lambda x: Bernoulli(logits=x).sample()
+        elif opt['x_dis'] == 'Logistic':
+            self.criterion = lambda data, params: discretized_logistic(data, params)
+            self.sample_op = lambda params: discretized_logistic_sample(params)
+        elif opt['x_dis'] == 'Bernoulli':
+            self.criterion = lambda real, fake: Bernoulli(logits=fake).log_prob(real).sum([1, 2, 3]).mean()
+            self.sample_op = lambda x: Bernoulli(logits=x).sample()
+        else:
+            raise NotImplementedError(opt['x_dis'])
+
+        if opt['data_set'] == 'MNIST' or opt['data_set'] == 'BinaryMNIST':
+            self.classifier = mnist_classifier(self.z_dim)
+        elif opt['data_set'] == 'ColoredMNIST':
+            self.classifier = colored_mnist_classifier(self.z_dim)
+        else:
+            raise NotImplementedError(opt['data_set'])
+        self.prior_mu = torch.zeros(self.z_dim, requires_grad=False)
+        self.prior_std = torch.ones(self.z_dim, requires_grad=False)
+        self.params = list(self.parameters())
+
+    def posterior_forward(self, params, x):
+        z_mu, z_std = params[0], F.softplus(params[1])
+        eps = torch.randn_like(z_mu).to(self.device)
+        zs = eps.mul(z_std).add_(z_mu)
+        pxz_params = self.decoder(zs)
+        pxz_params = pxz_params.reshape([-1] + self.input_shape)
+        loglikelihood = self.criterion(x, pxz_params)
+        kl = batch_KL_diag_gaussian_std(z_mu, z_std, self.prior_mu.to(self.device), self.prior_std.to(self.device))
+        elbo = loglikelihood - kl
+        return torch.mean(elbo) / np.log(2.)
 
     def forward(self, x):
-        h = self.encoder(x).view(-1, self.h_size)
-        mu = self.en_mean(h)
-        std = torch.exp(self.en_logstd(h))
-        return mu, std
+        z_mu, z_std = self.encoder(x)
+        eps = torch.randn_like(z_mu).to(self.device)
+        zs = eps.mul(z_std).add_(z_mu)
+        pxz_params = self.decoder(zs)
+        loglikelihood = self.criterion(x, pxz_params)
 
+        kl = batch_KL_diag_gaussian_std(z_mu, z_std, self.prior_mu.to(self.device), self.prior_std.to(self.device))
+        elbo = loglikelihood - kl
+        return torch.mean(elbo) / np.log(2.)
 
-class dc_decoder(nn.Module):
-    def __init__(self, opt, z_dim):
-        super().__init__()
-        self.z_dim = z_dim
-        self.h_dim = 256
-        self.fc = nn.Linear(self.z_dim, self.h_dim)
-        self.decoder = nn.Sequential(
-            nn.ConvTranspose2d(256, 128, 5, 2),
-            nn.ReLU(),
-            nn.ConvTranspose2d(128, 64, 5, 2),
-            nn.ReLU(),
-            nn.ConvTranspose2d(64, 32, 5, 2),
-            nn.ReLU(),
-            nn.ConvTranspose2d(32, 3, 4, 1),
-            nn.Sigmoid(),
-        )
+    def joint_forward(self, x, y, return_elbo=False):
+        z_mu, z_std = self.encoder(x, y)
+        eps = torch.randn_like(z_mu).to(self.device)
+        z = eps.mul(z_std).add_(z_mu)
+        x_out = self.decoder(z)
+        kl = batch_KL_diag_gaussian_std(z_mu, z_std, self.prior_mu.to(self.device), self.prior_std.to(self.device))
+        neg_l = - self.criterion(x, x_out)
 
-    def forward(self, z):
-        h = self.fc(z).view(-1, 256, 1, 1)
-        x = self.decoder(h)
-        return x
+        y_z_dis = self.classifier(z)
+        if return_elbo:
+            logpy_z = torch.sum(y * torch.log(y_z_dis + 1e-8), dim=1)
+            return -neg_l + logpy_z - kl
 
+        classification_loss = -torch.sum(y * torch.log(y_z_dis + 1e-8), dim=1).mean()
+        loss = torch.mean(neg_l + kl, dim=0) + self.alpha * classification_loss
+        return loss
 
+    def classify_accuracy(self, x, y):
+        with torch.no_grad():
+            z_mu, z_std = self.encoder(x, y)
+            eps = torch.randn_like(z_mu).to(self.device)
+            z = eps.mul(z_std).add_(z_mu)
+            y_z_dis = self.classifier(z)
+            if self.data_set == 'BinaryMNIST':
+                accuracy_1 = torch.eq(y_z_dis.argmax(-1), y.argmax(-1)).to(torch.float).mean() * 100
+                accuracy_2 = 100
+            elif self.data_set == 'ColoredMNIST':
+                accuracy_1 = torch.eq(y_z_dis[:, :10].argmax(-1), y[:, :10].argmax(-1)).to(torch.float).mean() * 100
+                accuracy_2 = torch.eq(y_z_dis[:, 10:].argmax(-1), y[:, 10:].argmax(-1)).to(torch.float).mean() * 100
+        return accuracy_1, accuracy_2
+
+    def sample(self, num=100):
+        with torch.no_grad():
+            eps = torch.randn(num, self.z_dim).to(self.device)
+            pxz_params = self.decoder(eps)
+            samples = self.sample_op(pxz_params)
+            return samples.reshape([-1] + self.input_shape)
+
+    def logpyz(self, z, y):
+        y_z_dis = self.classifier(z.view(-1, self.z_dim))
+        logpy_z = torch.sum(y * torch.log(y_z_dis + 1e-8), dim=1)
+        logp_z = dis.Normal(self.prior_mu.to(self.device), self.prior_std.to(self.device)).log_prob(z).sum(-1)
+        return logpy_z + logp_z
+
+    def conditional_sample(self, y, optimi):
+        self.eval()
+        loss_list = []
+        y = one_hot_labels(y, self.data_set).to(self.device)
+        z_opt = torch.randn(self.z_dim, requires_grad=True, device=self.device)
+        if optimi == 'sgld':
+            optimizer = SGLD([z_opt], lr=0.03)
+        elif optimi == 'adam':
+            optimizer = optim.Adam([z_opt], lr=5e-2)
+        sgld_samples = []
+        for i in range(0, 100):
+            optimizer.zero_grad()
+            L = -self.logpyz(z_opt, y)
+            L.backward()
+            loss_list.append(L.item())
+            if optimi == 'sgld':
+                sgld_sample = optimizer.step()
+                sgld_samples.append(sgld_sample)
+            elif optimi == 'adam':
+                optimizer.step()
+        
+#         fig, ax = plt.subplots(1, 1)
+#         ax.plot(loss_list)
+#         fig.show()
+        
+        with torch.no_grad():
+            if optimi == 'sgld':
+                final_sample = sgld_samples[90]
+                vae_out = self.decoder(final_sample.view(1, -1).to(self.device))
+                x_sample = self.sample_op(vae_out)
+            elif optimi == 'adam':
+                vae_out = self.decoder(z_opt.view(1, -1))
+                x_sample = self.sample_op(vae_out)
+            return x_sample
+
+        
 class dense_VAE(nn.Module):
     def __init__(self, opt):
         super().__init__()

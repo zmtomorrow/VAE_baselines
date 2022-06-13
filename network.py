@@ -3,6 +3,60 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
+class dc_encoder(nn.Module):
+    def __init__(self, h_size, z_dim, i_channel):
+        super().__init__()
+        self.z_dim = z_dim
+        self.h_size = h_size
+        self.i_channel = i_channel
+        self.encoder = nn.Sequential(
+            nn.Conv2d(self.i_channel, 32, 6, 2),
+            nn.LeakyReLU(0.2),
+            nn.Conv2d(32, 64, 6),
+            nn.LeakyReLU(0.2),
+            nn.Conv2d(64, 128, 5),
+            nn.LeakyReLU(0.2),
+            nn.Conv2d(128, 256, 5),
+            nn.LeakyReLU(0.2),
+        )
+
+        self.en_mean = nn.Linear(self.h_size, self.z_dim)
+        self.en_logstd = nn.Linear(self.h_size, self.z_dim)
+
+    def forward(self, x, y=None):
+        h = self.encoder(x)
+        if y is not None:
+            h = torch.flatten(h, start_dim=1)
+            y = torch.flatten(y, start_dim=1)
+            h = torch.cat([h, y], dim=1)
+        mu = self.en_mean(h)
+        std = F.softplus(self.en_logstd(h))
+        return mu, std
+
+
+class dc_decoder(nn.Module):
+    def __init__(self, z_dim, i_channel, i_channel_multiply):
+        super().__init__()
+        self.z_dim = z_dim
+        self.h_dim = 256
+        self.i_channel_multiply = i_channel_multiply
+        self.i_channel = i_channel
+        self.fc = nn.Linear(self.z_dim, self.h_dim)
+        self.decoder = nn.Sequential(
+            nn.ConvTranspose2d(256, 128, 5, 2),
+            nn.ReLU(),
+            nn.ConvTranspose2d(128, 64, 5, 2),
+            nn.ReLU(),
+            nn.ConvTranspose2d(64, 32, 5, 2),
+            nn.ReLU(),
+            nn.ConvTranspose2d(32, self.i_channel * self.i_channel_multiply, 4, 1),
+        )
+
+    def forward(self, z):
+        h = self.fc(z).view(-1, 256, 1, 1)
+        x = self.decoder(h)
+        return x
+    
 class Residual(nn.Module):
     def __init__(self, channels):
         super(Residual, self).__init__()

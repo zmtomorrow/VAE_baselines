@@ -60,6 +60,8 @@ if opt['architecture'] == 'dense_vae':
     model = dense_VAE(opt).to(opt['device'])
 elif opt['architecture'] == 'conv_vae':
     model = conv_VAE(opt).to(opt['device'])
+elif opt['architecture'] == 'dc_vae':
+    model = dc_VAE(opt).to(opt['device'])
 else:
     raise NotImplementedError(opt['architecture'])
 
@@ -82,13 +84,13 @@ for epoch in range(0, opt['epochs'] + 1):
         acc_1, acc_2 = model.classify_accuracy(x.to(opt['device']), y.to(opt['device']))
         acc_1_ += acc_1
         acc_2_ += acc_2
-
+        
     print(f' Epoch {epoch}: Label Accuracy is {acc_1_ / len(train_data)}%'
           f' Color Accuracy is {acc_2_ / len(train_data)}%')
     print(f' Epoch {epoch}: Loss is {L.item()}')
 
     # visualize
-    if epoch % 10 == 0:
+    if epoch % 5 == 0:
         gen_images = model.sample()
 
         fig, ax = plt.subplots(3, 6, figsize=(9, 4.5), constrained_layout=True)
