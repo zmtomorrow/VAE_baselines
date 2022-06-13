@@ -65,7 +65,7 @@ class SGLD(Optimizer):
                         d_p = buf
 
                 p.data.add_(d_p, alpha=-group['lr'])
-                noise_std = torch.Tensor([2*group['lr']])
+                noise_std = torch.Tensor([2*group['lr']]).to(p.device)
                 noise_std = noise_std.sqrt()
                 noise = p.data.new(
                     p.data.size()).normal_(mean=0, std=1)*noise_std

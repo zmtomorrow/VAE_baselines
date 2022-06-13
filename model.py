@@ -127,13 +127,12 @@ class dense_VAE(nn.Module):
     def conditional_sample(self, y, optimi):
         self.eval()
         y = one_hot_labels(y, self.data_set).to(self.device)
-        z_opt = torch.randn(self.z_dim, requires_grad=True)
+        z_opt = torch.randn(self.z_dim, requires_grad=True, device=self.device)
         if optimi == 'sgld':
             optimizer = SGLD([z_opt], lr=0.01)
         elif optimi == 'adam':
             optimizer = optim.Adam([z_opt], lr=5e-2)
         sgld_samples = []
-        z_opt = z_opt.to(self.device)
         for i in range(0, 100):
             optimizer.zero_grad()
             L = -self.logpyz(z_opt, y)
