@@ -41,56 +41,57 @@ def one_hot_labels(y, dataset_name):
         raise NotImplementedError(dataset_name)
 
 
-def LoadData(opt):
-    if opt['data_set'] == 'SVHN':
-        train_data = torchvision.datasets.SVHN(opt['dataset_path'], split='train', download=False,
-                                               transform=torchvision.transforms.ToTensor())
-        test_data = torchvision.datasets.SVHN(opt['dataset_path'], split='test', download=False,
-                                              transform=torchvision.transforms.ToTensor())
-
-    elif opt['data_set'] == 'CIFAR':
-        if opt['data_aug'] == True:
-            transform = transforms.Compose([
-                transforms.RandomCrop(32, padding=4),
-                transforms.RandomHorizontalFlip(0.5),
-                transforms.ToTensor()])
-        else:
-            transform = torchvision.transforms.ToTensor()
-        train_data = torchvision.datasets.CIFAR10(opt['dataset_path'], train=True, download=False, transform=transform)
-        test_data = torchvision.datasets.CIFAR10(opt['dataset_path'], train=False, download=False,
-                                                 transform=torchvision.transforms.ToTensor())
-
-    elif opt['data_set'] == 'MNIST':
-        transform = torchvision.transforms.Compose(
-            [torchvision.transforms.Resize(32),
-             torchvision.transforms.ToTensor()]
-        )
-        train_data = torchvision.datasets.MNIST(opt['dataset_path'], train=True, download=True,
-                                                transform=transform)
-        test_data = torchvision.datasets.MNIST(opt['dataset_path'], train=False, download=True,
-                                               transform=transform)
-
-    elif opt['data_set'] == 'BinaryMNIST':
-        trans = torchvision.transforms.Compose([
-            torchvision.transforms.Resize(32),
-            torchvision.transforms.ToTensor(),
-            lambda x: torch.round(x),
-        ])
-        train_data = torchvision.datasets.MNIST(opt['dataset_path'], train=True, download=True, transform=trans)
-        test_data = torchvision.datasets.MNIST(opt['dataset_path'], train=False, download=True, transform=trans)
-
-    elif opt['data_set'] == 'ColoredMNIST':
-        transform = torchvision.transforms.Compose(
-            [torchvision.transforms.Resize(32),
-             torchvision.transforms.ToTensor()]
-        )
-        train_data = ColoredMNIST(opt['dataset_path'], env='all_train', transform=transform)
-        test_data = ColoredMNIST(opt['dataset_path'], env='test', transform=transform)
-    elif opt["data_set"] == "latent":
-        train_data = LatentBlockDataset(opt['dataset_path'], train=True, transform=None)
-        test_data = LatentBlockDataset(opt['dataset_path'], train=False, transform=None)
+def LoadData(opt, latent=False):
+    if latent is True:
+        train_data = LatentBlockDataset(opt['dataset_path'] + 'latent.pickle', train=True, transform=None)
+        test_data = LatentBlockDataset(opt['dataset_path'] + 'latent.pickle', train=False, transform=None)
     else:
-        raise NotImplementedError
+        if opt['data_set'] == 'SVHN':
+            train_data = torchvision.datasets.SVHN(opt['dataset_path'], split='train', download=False,
+                                                   transform=torchvision.transforms.ToTensor())
+            test_data = torchvision.datasets.SVHN(opt['dataset_path'], split='test', download=False,
+                                                  transform=torchvision.transforms.ToTensor())
+
+        elif opt['data_set'] == 'CIFAR':
+            if opt['data_aug'] == True:
+                transform = transforms.Compose([
+                    transforms.RandomCrop(32, padding=4),
+                    transforms.RandomHorizontalFlip(0.5),
+                    transforms.ToTensor()])
+            else:
+                transform = torchvision.transforms.ToTensor()
+            train_data = torchvision.datasets.CIFAR10(opt['dataset_path'], train=True, download=False, transform=transform)
+            test_data = torchvision.datasets.CIFAR10(opt['dataset_path'], train=False, download=False,
+                                                     transform=torchvision.transforms.ToTensor())
+
+        elif opt['data_set'] == 'MNIST':
+            transform = torchvision.transforms.Compose(
+                [torchvision.transforms.Resize(32),
+                 torchvision.transforms.ToTensor()]
+            )
+            train_data = torchvision.datasets.MNIST(opt['dataset_path'], train=True, download=True,
+                                                    transform=transform)
+            test_data = torchvision.datasets.MNIST(opt['dataset_path'], train=False, download=True,
+                                                   transform=transform)
+
+        elif opt['data_set'] == 'BinaryMNIST':
+            trans = torchvision.transforms.Compose([
+                torchvision.transforms.Resize(32),
+                torchvision.transforms.ToTensor(),
+                lambda x: torch.round(x),
+            ])
+            train_data = torchvision.datasets.MNIST(opt['dataset_path'], train=True, download=True, transform=trans)
+            test_data = torchvision.datasets.MNIST(opt['dataset_path'], train=False, download=True, transform=trans)
+
+        elif opt['data_set'] == 'ColoredMNIST':
+            transform = torchvision.transforms.Compose(
+                [torchvision.transforms.Resize(32),
+                 torchvision.transforms.ToTensor()]
+            )
+            train_data = ColoredMNIST(opt['dataset_path'], env='all_train', transform=transform)
+            test_data = ColoredMNIST(opt['dataset_path'], env='test', transform=transform)
+        else:
+            raise NotImplementedError
 
     train_data_loader = data.DataLoader(train_data, batch_size=opt['batch_size'], shuffle=True)
     test_data_loader = data.DataLoader(test_data, batch_size=opt['test_batch_size'], shuffle=False)

@@ -29,9 +29,7 @@ def to_one_hot(tensor, n, fill_with=1.):
     return one_hot
 
 
-
-
-def process_args(args: argparse.Namespace) -> Dict:
+def process_args(args: argparse.Namespace, stage_two=False) -> Dict:
     kwargs = vars(args)
     # save_path = args.save_path.rstrip()
     # save_path = (
@@ -47,7 +45,8 @@ def process_args(args: argparse.Namespace) -> Dict:
     # kwargs["save_path"] = save_path
     # if args.save:
     #     os.mkdir(save_path)
-    kwargs['save_path'] = kwargs['save_path'] + kwargs['data_set'] + '/' + f"architecture_{kwargs['architecture']}" \
+    if not stage_two:
+        kwargs['save_path'] = kwargs['save_path'] + kwargs['data_set'] + '/' + f"architecture_{kwargs['architecture']}" \
                                                                            f"__alpha_{kwargs['alpha']}/"
     if not os.path.exists(kwargs['save_path']):
         os.mkdir(kwargs['save_path'])

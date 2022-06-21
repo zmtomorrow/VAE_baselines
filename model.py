@@ -6,6 +6,7 @@ from utils import *
 from dataset import *
 import torch.distributions as dis
 from torch.distributions.bernoulli import Bernoulli
+from functools import partial
 import numpy as np
 import torch.nn.functional as F
 from torch import optim
@@ -14,6 +15,7 @@ import matplotlib.pyplot as plt
 
 eps = 1e-7
 
+
 class dc_VAE(nn.Module):
     def __init__(self, opt):
         super().__init__()
@@ -21,7 +23,7 @@ class dc_VAE(nn.Module):
         self.data_set = opt['data_set']
         self.z_dim = opt['z_dim']
         self.alpha = opt['alpha']
-        if opt['data_set'] == 'MNIST' or opt['data_set'] == 'BinaryMNIST' :
+        if opt['data_set'] == 'MNIST' or opt['data_set'] == 'BinaryMNIST':
             self.input_dim = 32 * 32 + 10
             self.image_dim = 32 * 32
             self.input_shape = [1, 32, 32]
@@ -35,11 +37,14 @@ class dc_VAE(nn.Module):
             self.h_size = 256 + 10 + 2
             self.i_channel = 3
             self.i_channel_multiply = 3
+        else:
+            raise NotImplementedError(opt['data_set'])
 
         self.encoder = dc_encoder(self.h_size, self.z_dim, self.i_channel)
         self.decoder = dc_decoder(self.z_dim, self.i_channel, self.i_channel_multiply)
 
         if opt['x_dis'] == 'MixLogistic':
+            # Not finished
             self.criterion = lambda real, fake: Bernoulli(logits=fake).log_prob(real).sum([1, 2, 3]).mean()
             self.sample_op = lambda x: Bernoulli(logits=x).sample()
         elif opt['x_dis'] == 'Logistic':
@@ -121,48 +126,92 @@ class dc_VAE(nn.Module):
             samples = self.sample_op(pxz_params)
             return samples.reshape([-1] + self.input_shape)
 
-    def logpyz(self, z, y):
-        y_z_dis = self.classifier(z.view(-1, self.z_dim))
-        logpy_z = torch.sum(y * torch.log(y_z_dis + 1e-8), dim=1)
-        logp_z = dis.Normal(self.prior_mu.to(self.device), self.prior_std.to(self.device)).log_prob(z).sum(-1)
-        return logpy_z + logp_z
+    def logpyz(self, z_opt, y, s_opt, prior_func):
+        if prior_func is None and s_opt is None:
+            # z -> y
+            y_z_dis = self.classifier(z_opt.view(-1, self.z_dim))
+            logpy_z = torch.sum(y * torch.log(y_z_dis + 1e-8), dim=1)
+            logp_z = dis.Normal(self.prior_mu.to(self.device), self.prior_std.to(self.device)).log_prob(z_opt).sum(-1)
+            return z_opt, -(logpy_z + logp_z)
+        elif z_opt is None:
+            # s -> z -> y
+            z_temp = prior_func(s_opt.to(self.device))
+            z_mean, z_std = z_temp[:, :self.z_dim], F.softplus(z_temp[:, self.z_dim:])
+            z = z_mean + z_std * torch.randn_like(z_std)
+            y_z_dis = self.classifier(z.view(-1, self.z_dim))
+            logpy_z = torch.sum(y * torch.log(y_z_dis + 1e-8), dim=1)
+            logpz_s = dis.Normal(z_mean, z_std).log_prob(z).sum(-1)
 
-    def conditional_sample(self, y, optimi):
+            prior_mu = torch.zeros_like(s_opt)
+            prior_std = torch.ones_like(s_opt)
+            logp_s = dis.Normal(prior_mu.to(self.device), prior_std.to(self.device)).log_prob(s_opt).sum(-1)
+            return z, -(logpy_z + logpz_s + logp_s)
+        else:
+            raise ValueError
+
+    def conditional_sample(self, y, optmzr, prior_model, opt):
         self.eval()
         loss_list = []
         y = one_hot_labels(y, self.data_set).to(self.device)
-        z_opt = torch.randn(self.z_dim, requires_grad=True, device=self.device)
-        if optimi == 'sgld':
-            optimizer = SGLD([z_opt], lr=0.03)
-        elif optimi == 'adam':
-            optimizer = optim.Adam([z_opt], lr=5e-2)
+        if prior_model is None:
+            z_opt = torch.randn(self.z_dim, requires_grad=True, device=self.device)
+            s_opt = None
+            prior_func = None
+
+            if optmzr == 'sgld':
+                optimizer = SGLD([z_opt], lr=0.03)
+            elif optmzr == 'adam':
+                optimizer = optim.Adam([z_opt], lr=5e-2)
+            else:
+                raise NotImplementedError(optmzr)
+        elif prior_model == 'vae':
+            if opt is None:
+                raise ValueError('opt should match prior model!')
+            latent_z_shape = [opt['batch_size'], opt['z_dim']]
+            output_size = [opt['gen_samples']] + [latent_z_shape[1]]
+            stage_two_model = linear_VAE(device=opt['device'], input_size=latent_z_shape, hidden_size=opt['c_hidden'],
+                                         output_size=output_size).to(opt["device"])
+            stage_two_model.eval()
+            s_opt = torch.randn(1, opt['c_hidden'], requires_grad=True, device=self.device)
+            z_opt = None
+            prior_func = stage_two_model.decoder
+
+            if optmzr == 'sgld':
+                optimizer = SGLD([s_opt], lr=0.03)
+            elif optmzr == 'adam':
+                optimizer = optim.Adam([s_opt], lr=5e-2)
+            else:
+                raise NotImplementedError(optmzr)
+        else:
+            raise NotImplementedError(prior_model)
+
         sgld_samples = []
-        for i in range(0, 100):
+        for i in range(0, 200):
             optimizer.zero_grad()
-            L = -self.logpyz(z_opt, y)
+            z, L = self.logpyz(z_opt, y, s_opt, prior_func)
             L.backward()
             loss_list.append(L.item())
-            if optimi == 'sgld':
+            if optmzr == 'sgld':
                 sgld_sample = optimizer.step()
                 sgld_samples.append(sgld_sample)
-            elif optimi == 'adam':
+            elif optmzr == 'adam':
                 optimizer.step()
-        
-#         fig, ax = plt.subplots(1, 1)
-#         ax.plot(loss_list)
-#         fig.show()
-        
+
+        # fig, ax = plt.subplots(1, 1)
+        # ax.plot(loss_list)
+        # fig.show()
+
         with torch.no_grad():
-            if optimi == 'sgld':
+            if optmzr == 'sgld':
                 final_sample = sgld_samples[90]
                 vae_out = self.decoder(final_sample.view(1, -1).to(self.device))
                 x_sample = self.sample_op(vae_out)
-            elif optimi == 'adam':
-                vae_out = self.decoder(z_opt.view(1, -1))
+            elif optmzr == 'adam':
+                vae_out = self.decoder(z.view(1, -1))
                 x_sample = self.sample_op(vae_out)
             return x_sample
 
-        
+
 class dense_VAE(nn.Module):
     def __init__(self, opt):
         super().__init__()
@@ -170,7 +219,7 @@ class dense_VAE(nn.Module):
         self.data_set = opt['data_set']
         self.z_dim = opt['z_dim']
         self.alpha = opt['alpha']
-        if opt['data_set'] == 'MNIST' or opt['data_set'] == 'BinaryMNIST' :
+        if opt['data_set'] == 'MNIST' or opt['data_set'] == 'BinaryMNIST':
             self.input_dim = 32 * 32 + 10
             self.image_dim = 32 * 32
             self.input_shape = [1, 32, 32]

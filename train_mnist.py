@@ -11,8 +11,8 @@ import pickle
 import matplotlib.pyplot as plt
 import torch.nn.functional as F
 
-os.environ["CUDA_VISIBLE_DEVICES"] = "1"
-os.chdir("/home/ma-user/work/VAE_baseline/")
+os.environ["CUDA_VISIBLE_DEVICES"] = "3"
+os.chdir("/import/home/xzhoubi/hudson/VAE_baselines/")
 
 print(os.getcwd())
 parser = argparse.ArgumentParser()
@@ -65,6 +65,10 @@ elif opt['architecture'] == 'dc_vae':
 else:
     raise NotImplementedError(opt['architecture'])
 
+# save model config
+with open(f"{opt['save_path']}stage_one_model_config.pickle", 'wb') as handle:
+    pickle.dump(opt, handle)
+
 # if opt['load_model'] == True:
 #     model.load_state_dict(torch.load(f"{opt['save_path']}model_{opt['data_set']}_{str(opt['z_channels'])}.pth"))
 
@@ -105,20 +109,23 @@ for epoch in range(0, opt['epochs'] + 1):
         plt.show()
 
     if opt['if_save_model']:
-        torch.save(model.state_dict(), f"{opt['save_path']}model.pth")
+        torch.save(model.state_dict(), f"{opt['save_path']}stage_one_model.pth")
+
 
 if opt['if_save_latent']:
     z_mu_list = []
     z_std_list = []
     with torch.no_grad():
-        for x, _ in train_data:
-            z_mu, z_std = model.encoder(x.to(opt['device']))
+        model.eval()
+        for x, y in train_data:
+            y = one_hot_labels(y, opt['data_set'])
+            z_mu, z_std = model.encoder(x.to(opt['device']), y.to(opt['device']))
             z_std_list.append(z_std.cpu().numpy())
             z_mu_list.append(z_mu.cpu().numpy())
 
     z_dict = {}
-    z_mu_array = np.concatenate(z_mu_list, axis=0).reshape([-1, 100])
-    z_std_array = np.concatenate(z_std_list, axis=0).reshape([-1, 100])
+    z_mu_array = np.concatenate(z_mu_list, axis=0).reshape([-1, opt['z_dim']])
+    z_std_array = np.concatenate(z_std_list, axis=0).reshape([-1, opt['z_dim']])
     z_dict["mean"] = z_mu_array
     z_dict["std"] = z_std_array
 

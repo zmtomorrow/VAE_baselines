@@ -1,11 +1,4 @@
-import torch
-import torch.nn.functional as F
-from torch import optim
-from utils import *
 from model import *
-import numpy as np
-from tqdm import tqdm
-import os
 import sys
 import argparse
 import utils
@@ -17,14 +10,20 @@ os.chdir('/import/home/xzhoubi/hudson/VAE_baselines/')
 os.environ["CUDA_VISIBLE_DEVICES"] = "5"
 
 parser = argparse.ArgumentParser()
+parser.add_argument('--stage_one_arch', type=str, default='dc_vae')
 parser.add_argument('--architecture', type=str, default='pixelcnn')
 parser.add_argument('--loss', type=str, default='forward_kl')
+parser.add_argument('--path', type=str, default=None)
+parser.add_argument('--save_path', type=str, default='./save/')
+parser.add_argument('--data_set', type=str, default='BinaryMNIST')
 parser.add_argument('--z_channels', type=int, default=2)
 parser.add_argument('--log_freq', type=int, default=5)
 parser.add_argument('--mixture_num', type=int, default=1)
 parser.add_argument('--lr', type=float, default=1e-3)
+parser.add_argument('--x_dis', type=str, default='Bernoulli')
+parser.add_argument('--alpha', type=float, default=0.0)
 args = parser.parse_args()
-opt = utils.process_args(args)
+opt = utils.process_args(args, stage_two=True)
 
 if torch.cuda.is_available():
     torch.backends.cudnn.deterministic = True
@@ -35,13 +34,12 @@ else:
     opt["device"] = torch.device("cpu")
     opt["if_cuda"] = False
 
-opt['data_set'] = 'latent'
-opt['x_dis'] = 'Logistic'  ## or MixLogistic
+opt['save_path'] = opt['path']
+# opt['x_dis'] = 'Bernoulli'  ## or Logistic
 # opt['z_channels'] = 2  ## 2*64
 opt['epochs'] = 10
-opt['dataset_path'] = f"./save/latent_CIFAR_{opt['z_channels']}.pickle"
-opt['save_path'] = './save/'
 opt['result_path'] = './result/'
+opt['dataset_path'] = opt['path']
 opt['batch_size'] = 100
 opt['test_batch_size'] = 200
 opt['if_regularizer'] = False
@@ -63,7 +61,14 @@ np.random.seed(opt['seed'])
 torch.manual_seed(opt['seed'])
 eps = 1e-7
 
-train_data, test_data, train_data_evaluation = LoadData(opt)
+train_data, test_data, train_data_evaluation = LoadData(opt, latent=True)
+
+if args.stage_one_arch == 'dc_vae':
+    opt['z_dim'] = 100
+    stage_one_model = dc_VAE(opt).to(opt['device'])
+    stage_one_model.load_state_dict(torch.load(f"{opt['path']}stage_one_model.pth"))
+else:
+    raise NotImplementedError(args.stage_one_arch)
 
 if args.architecture == "pixelcnn":
     latent_z_shape = [opt['batch_size'], opt['z_channels'], 8, 8]
@@ -79,7 +84,7 @@ elif args.architecture == 'rnn':
     model = RNN(device=opt['device'], input_size=latent_z_shape, hidden_size=opt['c_hidden'],
                 num_layers=2, output_size=output_size).to(opt["device"])
 elif args.architecture == 'vae':
-    latent_z_shape = [opt['batch_size'], opt['z_channels'] * 8 * 8]
+    latent_z_shape = [opt['batch_size'], opt['z_dim']]
     output_size = [opt['gen_samples']] + [latent_z_shape[1]]
     cat_dim = 2
     model = linear_VAE(device=opt['device'], input_size=latent_z_shape, hidden_size=opt['c_hidden'],
@@ -89,8 +94,6 @@ else:
 
 optimizer = optim.Adam(model.parameters(), lr=opt['lr'])
 
-pretrained_VAE = VAE(opt).to(opt['device'])
-pretrained_VAE.load_state_dict(torch.load(f"{opt['save_path']}model_CIFAR_{str(opt['z_channels'])}.pth"))
 
 model.train()
 
@@ -123,16 +126,20 @@ for epoch in range(1, opt['epochs'] + 1):
         # print("KL", kl.item())
         loss_list.append(loss.item())
 
-    model.eval()
-    gen_z, _ = model.sample()
+    if opt['visualize'] and epoch % opt['log_freq'] == 0:
+        model.eval()
+        gen_z, _ = model.sample()
+        pxz_params = stage_one_model.decoder(gen_z)
+        x_hat = stage_one_model.sample_op(pxz_params)
 
-    if opt['visualize'] and (epoch) % opt['log_freq'] == 0:
-        pxz_params = pretrained_VAE.decoder(gen_z)
-        x_hat = pretrained_VAE.sample_op(pxz_params)
         fig, ax = plt.subplots(2, 10, figsize=(20, 6))
         ax = ax.flatten()
         for i in range(20):
-            ax[i].imshow(x_hat[i, :].detach().cpu().numpy().transpose(1, 2, 0))
+            x_vis = x_hat[i, :].detach().cpu().numpy().transpose(1, 2, 0)
+            if x_vis.shape[-1] == 1:
+                ax[i].imshow(x_vis, cmap='gray')
+            else:
+                ax[i].imshow(x_vis)
             ax[i].axis('off')
         plt.suptitle("Images generated from p eta (z)")
         fig.tight_layout()
@@ -172,4 +179,6 @@ for epoch in range(1, opt['epochs'] + 1):
         plt.show()
 
     if opt['if_save_model']:
-        torch.save(model.state_dict(), f"{opt['save_path']}{opt['architecture']}_{str(opt['z_channels'])}.pth")
+        torch.save(model.state_dict(), f"{opt['save_path']}stage_two_model.pth")
+        with open(f"{opt['save_path']}stage_two_model_config.pickle", 'wb') as handle:
+            pickle.dump(opt, handle)
